@@ -60,6 +60,15 @@ class OpenAICompatibleClient(LLMClient):
         if "openrouter.ai" in self.base_url and not self.api_key:
             raise LLMError(f"{self.tier}: OPENROUTER_API_KEY is not configured")
 
+        # Check Redis cache — same model+role+messages → same response (1h TTL)
+        try:
+            from aegis.llm.cache import get_cached, set_cached
+            cached = await get_cached(self.model, role, messages)
+            if cached is not None:
+                return cached
+        except Exception:  # noqa: S110
+            pass  # cache unavailable — proceed normally without logging
+
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -99,7 +108,7 @@ class OpenAICompatibleClient(LLMClient):
         data = r.json()
         content = _message_content(data)
         usage = data.get("usage") or {}
-        return LLMCompletion(
+        result = LLMCompletion(
             tier=self.tier,
             model=self.model,
             role=role,
@@ -111,6 +120,12 @@ class OpenAICompatibleClient(LLMClient):
             ),
             latency_ms=latency_ms,
         )
+        try:
+            from aegis.llm.cache import set_cached
+            await set_cached(self.model, role, messages, result)
+        except Exception:  # noqa: S110
+            pass
+        return result
 
 
 def _message_content(data: dict[str, Any]) -> str:

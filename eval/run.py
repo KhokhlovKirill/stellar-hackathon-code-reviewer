@@ -22,7 +22,10 @@ from aegis.pipeline.deterministic.secrets import scan_secrets
 from aegis.schemas import DiffLine, FileChange, Hunk, LineKind
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_GOLDEN = ROOT / "golden" / "seed.jsonl"
+# Prefer the full golden-set if it has been built; fall back to the seed.
+_FULL = ROOT / "golden" / "full.jsonl"
+_SEED = ROOT / "golden" / "seed.jsonl"
+DEFAULT_GOLDEN = _FULL if _FULL.exists() else _SEED
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,18 +71,35 @@ def main() -> None:
         raise SystemExit(1)
 
 
+# CWEs testable by the offline secrets scanner only
+_OFFLINE_CWES = {"CWE-798", "CWE-321", "CWE-259", "CWE-312"}
+
+
 def run(path: Path) -> Metrics:
+    """Evaluate the offline (no tools required) secret detection on the golden set.
+
+    Cases whose expected CWEs are entirely outside _OFFLINE_CWES are skipped —
+    they require Semgrep/Bandit/SCA and are evaluated separately by score_criteria.
+    Clean negatives are always included to measure FP rate.
+    """
     tp = fp = fn = line_hits = expected_total = 0
     for case in _cases(path):
+        all_expected = {(item["cwe"], int(item["line"])) for item in case["expected"]}
+        secret_expected = {(cwe, ln) for cwe, ln in all_expected if cwe in _OFFLINE_CWES}
+
+        # Skip non-secret vulnerable cases — can't be tested without external tools.
+        if all_expected and not secret_expected:
+            continue
+
         fc = _file_change(case)
         findings = scan_secrets([fc])
-        expected = {(item["cwe"], int(item["line"])) for item in case["expected"]}
-        got = {(finding.cwe, finding.line) for finding in findings}
-        tp += len(expected & got)
-        fp += len(got - expected)
-        fn += len(expected - got)
-        line_hits += len(expected & got)
-        expected_total += len(expected)
+        got = {(finding.cwe, finding.line) for finding in findings if finding.cwe in _OFFLINE_CWES}
+
+        tp += len(secret_expected & got)
+        fp += len(got - secret_expected)
+        fn += len(secret_expected - got)
+        line_hits += len(secret_expected & got)
+        expected_total += len(secret_expected)
     return Metrics(tp=tp, fp=fp, fn=fn, line_hits=line_hits, expected=expected_total)
 
 

@@ -15,9 +15,17 @@ from aegis.schemas import FileChange, Finding, FindingSource, Severity
 
 # (name, compiled regex, CWE). Patterns mirror the log redaction set.
 _PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
+    # AWS — access key ID (AKIA…) and secret access key (40-char base64-ish)
     ("AWS access key id", re.compile(r"AKIA[0-9A-Z]{16}"), "CWE-798"),
+    ("AWS secret access key",
+     re.compile(r"""(?i)aws[_-]?secret[_-]?access[_-]?key\s*[=:]\s*['"]?[A-Za-z0-9/+]{40}['"]?"""),
+     "CWE-798"),
     ("GitHub token", re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"), "CWE-798"),
     ("GitLab PAT", re.compile(r"glpat-[A-Za-z0-9_\-]{15,}"), "CWE-798"),
+    # Slack webhooks and bot tokens
+    ("Slack webhook",
+     re.compile(r"hooks\.slack\.com/services/T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[A-Za-z0-9]{20,}"),
+     "CWE-798"),
     ("Slack token", re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"), "CWE-798"),
     ("Stripe secret key", re.compile(r"sk_live_[0-9a-zA-Z]{20,}"), "CWE-798"),
     ("OpenAI-style key", re.compile(r"sk-[A-Za-z0-9]{20,}"), "CWE-798"),
@@ -25,12 +33,15 @@ _PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     ("Private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "CWE-321"),
     ("JWT", re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"),
      "CWE-798"),
+    # DB URLs with embedded credentials: scheme://user:pass@host
+    ("DB connection string with creds",
+     re.compile(r"(?i)(postgres(?:ql)?|mysql|mongodb|redis|amqp)://[^:\s@/]+:[^@\s]{3,}@"),
+     "CWE-798"),
+    # Generic: password/secret/api_key = "value" (must come after specific patterns)
     ("Generic assigned secret",
      re.compile(r"""(?i)(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|"""
                 r"""auth[_-]?token|client[_-]?secret)\s*[=:]\s*['"][^'"\s]{6,}['"]"""),
      "CWE-798"),
-    ("DB connection string with creds",
-     re.compile(r"(?i)(postgres|mysql|mongodb|redis|amqp)://[^:\s]+:[^@\s]+@"), "CWE-798"),
 ]
 _SECRETISH_FILE = re.compile(r"(^|/)(\.env|\.npmrc|\.pypirc|id_rsa|.*\.pem|.*\.p12)$")
 _PLACEHOLDER = re.compile(
