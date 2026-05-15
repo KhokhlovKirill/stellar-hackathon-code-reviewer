@@ -12,6 +12,9 @@ webhooks_received_total = Counter(
     ["provider", "event_type"],
 )
 
+# Alias for modules that expect upper-case metric handles (e.g. webhooks router).
+WEBHOOKS_RECEIVED = webhooks_received_total
+
 webhooks_invalid_signature_total = Counter(
     "aegis_webhooks_invalid_signature_total",
     "Webhook events with invalid HMAC signature",

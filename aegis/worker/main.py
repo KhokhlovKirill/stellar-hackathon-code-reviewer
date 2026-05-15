@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from arq import Worker
 from arq.connections import RedisSettings
+from arq.worker import create_worker
 
 from aegis.observability.logging import setup_logging
 from aegis.observability.metrics import setup_metrics
@@ -81,11 +81,10 @@ WorkerSettings = get_worker_settings()
 
 if __name__ == "__main__":
     """Run the worker directly: python -m aegis.worker.main"""
-    import arq
 
     async def main():
         setup_logging()
-        worker = Worker(WorkerSettings)
+        worker = create_worker(WorkerSettings)
         await worker.async_run()
 
     asyncio.run(main())
