@@ -1,0 +1,3 @@
+{"id":"secret_github_token","path":"app/config.py","language":"python","added_lines":["GITHUB_TOKEN = \"ghp_abcdefghijklmnopqrstuvwxyz123456\""],"expected":[{"cwe":"CWE-798","line":1}]}
+{"id":"clean_placeholder","path":"tests/fixtures.py","language":"python","added_lines":["API_KEY = \"example-placeholder\""],"expected":[]}
+{"id":"secret_db_url","path":"app/settings.py","language":"python","added_lines":["DATABASE_URL = \"postgres://user:pass@example.com/db\""],"expected":[{"cwe":"CWE-798","line":1}]}

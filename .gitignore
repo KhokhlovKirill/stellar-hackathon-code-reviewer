@@ -22,6 +22,8 @@ venv/
 eval/results/*.json
 !eval/results/.gitkeep
 eval/golden/*.jsonl
+!eval/golden/.gitkeep
+!eval/golden/seed.jsonl
 *.sqlite3
 *.db
 .coverage
