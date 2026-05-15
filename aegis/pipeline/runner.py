@@ -168,6 +168,7 @@ async def _run_optional_stages(state) -> None:  # type: ignore[no-untyped-def]
         ("llm", "aegis.pipeline.llm_stage", "run_llm_analysis"),
         ("suppression", "aegis.pipeline.suppression", "apply_suppression"),
         ("risk_score", "aegis.pipeline.risk_score", "compute_risk_score"),
+        ("blast_radius", "aegis.pipeline.blast_radius", "generate_blast_radius"),
         ("render", "aegis.pipeline.render", "render_and_post"),
         ("policy", "aegis.pipeline.policy", "apply_merge_policy"),
     ]

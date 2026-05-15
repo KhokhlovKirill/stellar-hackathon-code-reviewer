@@ -97,6 +97,9 @@ def render_summary(state: PipelineState) -> str:
         lines.extend(["", "**Risk breakdown**"])
         lines.extend(f"- `{k}`: +{v}" for k, v in sorted(breakdown.items()))
 
+    if state.blast_radius_mermaid:
+        lines.extend(["", "**Blast Radius**", "```mermaid", state.blast_radius_mermaid, "```"])
+
     if state.result.degraded:
         lines.extend(["", "**Degraded components**"])
         lines.extend(f"- `{item}`" for item in state.result.degraded)

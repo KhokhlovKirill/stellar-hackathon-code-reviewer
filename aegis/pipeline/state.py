@@ -27,5 +27,6 @@ class PipelineState:
     suppressed_findings: list[Finding] = field(default_factory=list)
     risk_score: int = 0
     risk_label: str = "low"
+    blast_radius_mermaid: str | None = None
     summary_ref: str | None = None
     posted_refs: list[str] = field(default_factory=list)             # VCS comment ids
