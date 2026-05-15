@@ -222,7 +222,10 @@ async def project_detail(
                 "name": project.name,
                 "description": project.description,
             },
-            "repos": [_repo_out(r).model_dump() for r in repos],
+            "repos": [
+                _repo_out(r, await _policy_for(session, r.id)).model_dump()
+                for r in repos
+            ],
             "scans": [
                 {
                     "id": s.id, "repo_slug": s.repo_slug, "pr_id": s.pr_id,
@@ -266,7 +269,11 @@ async def add_repo_to_project(
             repo_id=repo.id, kind="webhook_secret",
             ciphertext=encrypt(req.webhook_secret),
         ))
-        policy = repo.policy or RepoPolicy(repo_id=repo.id)
+        policy = (
+            await session.execute(
+                select(RepoPolicy).where(RepoPolicy.repo_id == repo.id)
+            )
+        ).scalar_one_or_none() or RepoPolicy(repo_id=repo.id)
         policy.severity_gate = req.severity_gate
         policy.merge_block = req.merge_block
         policy.ignore_globs = req.ignore_globs
@@ -274,14 +281,17 @@ async def add_repo_to_project(
         policy.lang = req.lang
         session.add(policy)
         await session.flush()
-        return _repo_out(repo)
+        return _repo_out(repo, policy)
 
 
 @router.get("/repos", response_model=list[RepoOut])
 async def list_repos(_: str = Depends(require_admin)) -> list[RepoOut]:
     async with get_session() as session:
         repos = (await session.execute(select(Repository))).scalars().all()
-        return [_repo_out(repo) for repo in repos]
+        return [
+            _repo_out(repo, await _policy_for(session, repo.id))
+            for repo in repos
+        ]
 
 
 @router.post("/repos", response_model=RepoOut)
@@ -319,7 +329,11 @@ async def create_repo(req: RepoCreate, actor: str = Depends(require_admin)) -> R
                 ciphertext=encrypt(req.webhook_secret),
             )
         )
-        policy = repo.policy or RepoPolicy(repo_id=repo.id)
+        policy = (
+            await session.execute(
+                select(RepoPolicy).where(RepoPolicy.repo_id == repo.id)
+            )
+        ).scalar_one_or_none() or RepoPolicy(repo_id=repo.id)
         policy.severity_gate = req.severity_gate
         policy.merge_block = req.merge_block
         policy.ignore_globs = req.ignore_globs
@@ -328,7 +342,7 @@ async def create_repo(req: RepoCreate, actor: str = Depends(require_admin)) -> R
         session.add(policy)
         await session.flush()
         _ = actor
-        return _repo_out(repo)
+        return _repo_out(repo, policy)
 
 
 @router.get("/scans")
@@ -404,8 +418,16 @@ async def stats(_: str = Depends(require_admin)) -> dict[str, Any]:
         return {"scans": scans, "findings": findings, "blocked_or_high_risk": blocked}
 
 
-def _repo_out(repo: Repository) -> RepoOut:
-    policy = repo.policy
+async def _policy_for(session: Any, repo_id: int) -> RepoPolicy | None:
+    row = (
+        await session.execute(
+            select(RepoPolicy).where(RepoPolicy.repo_id == repo_id)
+        )
+    ).scalar_one_or_none()
+    return cast("RepoPolicy | None", row)
+
+
+def _repo_out(repo: Repository, policy: RepoPolicy | None = None) -> RepoOut:
     return RepoOut(
         id=repo.id,
         provider=repo.provider,

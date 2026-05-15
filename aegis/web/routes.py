@@ -267,7 +267,11 @@ async def add_repo_submit(
                          ciphertext=encrypt(access_token)))
         s.add(RepoSecret(repo_id=repo.id, kind="webhook_secret",
                          ciphertext=encrypt(webhook_secret)))
-        policy = repo.policy or RepoPolicy(repo_id=repo.id)
+        policy = (
+            await s.execute(
+                select(RepoPolicy).where(RepoPolicy.repo_id == repo.id)
+            )
+        ).scalar_one_or_none() or RepoPolicy(repo_id=repo.id)
         policy.severity_gate = severity_gate
         policy.merge_block = merge_block
         s.add(policy)
