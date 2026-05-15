@@ -7,12 +7,15 @@ Docker на macOS не пробрасывает Metal/GPU в контейнер,
 
 ```
 services:
-  api       — FastAPI (webhook gateway + admin portal), порт 8080
+  web       — React UI + nginx, порт 8099 (прокси на api)
+  api       — FastAPI (REST + webhooks), внутренний :8080
   worker    — Arq worker (pipeline)
   postgres  — состояние/аудит (volume)
   redis     — очередь + кэш + идемпотентность (volume)
   prometheus, grafana — наблюдаемость (опц., profile=obs)
 ```
+
+Запуск из корня репозитория: `make docker-up` → UI: http://localhost:8099
 
 - `worker` и `api` — один образ (multi-stage Dockerfile), разные command.
 - Semgrep ставится в образ (CLI + рулсеты векторизованы на build, чтобы не ходить в сеть

@@ -47,7 +47,7 @@ ensemble_profile, prompt_overrides, lang, budgets)`,
 
 ## 5. UI
 
-FastAPI + server-rendered шаблоны (Jinja2) + минимальный JS — без тяжёлого SPA
+FastAPI REST (`/api`) + React SPA (`frontend/`, Vite + Tailwind) — nginx на :8099
 (production-надёжность и простота деплоя приоритетнее). Страницы: Repos, Repo Detail
 (policy + secrets + test), Scans, Scan Detail (findings + diff + LLM trace), Analytics
 (встроенные панели/ссылка в Grafana), Audit.

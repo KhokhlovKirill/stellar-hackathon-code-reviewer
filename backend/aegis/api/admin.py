@@ -1,4 +1,4 @@
-"""Backend REST API: user auth, projects, repos, scans (consumed by web + clients)."""
+"""Backend REST API: auth, projects, repos, scans, quick review (React UI)."""
 
 from __future__ import annotations
 
@@ -369,11 +369,27 @@ async def list_scans(_: str = Depends(require_admin)) -> list[dict[str, Any]]:
         ]
 
 
+async def _user_owns_scan(session: Any, scan: Scan, user_id: int) -> bool:
+    repo = (
+        await session.execute(
+            select(Repository).where(Repository.slug == scan.repo_slug)
+        )
+    ).scalars().first()
+    if repo is None or repo.project_id is None:
+        return False
+    project = (
+        await session.execute(select(Project).where(Project.id == repo.project_id))
+    ).scalar_one_or_none()
+    return project is not None and project.owner_id == user_id
+
+
 @router.get("/scans/{scan_id}")
-async def scan_detail(scan_id: str, _: str = Depends(require_admin)) -> dict[str, Any]:
+async def scan_detail(scan_id: str, user: User = _user_dep) -> dict[str, Any]:
     async with get_session() as session:
-        scan = (await session.execute(select(Scan).where(Scan.id == scan_id))).scalar_one_or_none()
-        if scan is None:
+        scan = (
+            await session.execute(select(Scan).where(Scan.id == scan_id))
+        ).scalar_one_or_none()
+        if scan is None or not await _user_owns_scan(session, scan, user.id):
             raise HTTPException(status_code=404, detail="scan not found")
         findings = (
             await session.execute(select(FindingRow).where(FindingRow.scan_id == scan_id))
@@ -381,6 +397,8 @@ async def scan_detail(scan_id: str, _: str = Depends(require_admin)) -> dict[str
         return {
             "scan": {
                 "id": scan.id,
+                "repo_slug": scan.repo_slug,
+                "pr_id": scan.pr_id,
                 "status": scan.status,
                 "risk_score": scan.risk_score,
                 "risk_label": scan.risk_label,
@@ -403,6 +421,44 @@ async def scan_detail(scan_id: str, _: str = Depends(require_admin)) -> dict[str
                 for f in findings
             ],
         }
+
+
+class ReviewRequest(BaseModel):
+    repo_url: str = Field(min_length=1, max_length=500)
+    token: str = ""
+
+
+@router.post("/review")
+async def review_repo(req: ReviewRequest) -> dict[str, Any]:
+    """Pull-mode security review of a public (or token-authed) GitHub PR."""
+    from aegis.pipeline.simple_scan import run_simple_scan
+
+    result = await run_simple_scan(req.repo_url.strip(), token=req.token.strip() or None)
+    if result.error:
+        raise HTTPException(status_code=422, detail=result.error)
+    return {
+        "repo": result.repo,
+        "pr_number": result.pr_number,
+        "pr_title": result.pr_title,
+        "pr_url": result.pr_url,
+        "pr_author": result.pr_author,
+        "files_scanned": result.files_scanned,
+        "degraded": result.degraded,
+        "findings": [
+            {
+                "severity": f.severity.value,
+                "cwe": f.cwe,
+                "title": f.title,
+                "file": f.file,
+                "line": f.line,
+                "rationale": f.rationale,
+                "fix": f.fix,
+                "source": f.source.value,
+                "confidence": f.confidence,
+            }
+            for f in result.findings
+        ],
+    }
 
 
 @router.get("/stats")

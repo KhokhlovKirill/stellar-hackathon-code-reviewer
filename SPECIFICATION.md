@@ -59,7 +59,7 @@ Redis     (очередь, LLM-кэш, идемпотентность)
 | FastAPI app | `aegis/api/app.py` | Точка входа, монтирует все роутеры |
 | Webhook gateway | `aegis/api/webhooks.py` | Приём событий от VCS |
 | REST API | `aegis/api/admin.py` | Управление проектами, репо, сканами |
-| Web UI | `aegis/web/routes.py` | HTML-страницы (Jinja2 + Tailwind) |
+| Web UI | `frontend/src/` (React + Vite + Tailwind) | SPA, nginx :8099 |
 | Pipeline | `aegis/pipeline/` | Стадии анализа |
 | Providers | `aegis/providers/` | Адаптеры для GitHub/GitLab/Bitbucket |
 | LLM | `aegis/llm/` | Клиенты OpenRouter + LM Studio |
@@ -502,7 +502,7 @@ code-review/
 │   │   └── webhooks.py      # webhook gateway
 │   ├── web/
 │   │   ├── routes.py        # web UI routes
-│   │   └── templates/       # Jinja2 HTML templates
+│   └── src/                 # React SPA pages & components
 │   ├── pipeline/
 │   │   ├── runner.py        # orchestrator
 │   │   ├── deterministic/   # regex detectors

@@ -1,10 +1,47 @@
-# Frontend
+# Aegis Frontend
 
-This directory is the frontend boundary for Aegis.
+React + Vite + TypeScript + Tailwind CSS — единственный UI проекта.
 
-Current contents:
+## Стек
 
-- `templates/` — server-rendered Jinja2 templates used by `backend/aegis/web/routes.py`.
+| Слой | Технология |
+|------|------------|
+| UI | React 19 |
+| Сборка | Vite 6 |
+| Язык | TypeScript |
+| Стили | Tailwind CSS 4 |
+| Роутинг | React Router 7 |
+| API | REST `fetch` + JWT в `localStorage` |
 
-The backend reads templates from `AEGIS_FRONTEND_TEMPLATES`; by default, local backend
-runs use `../frontend/templates`, and Docker uses `/app/frontend/templates`.
+## Docker (вместе с бэкендом)
+
+```bash
+make docker-up    # из корня репозитория
+```
+
+→ **http://localhost:8099**
+
+## Локальная разработка
+
+```bash
+make docker-up
+cd frontend && npm install && npm run dev
+```
+
+→ **http://localhost:5173** (прокси на `localhost:8099`)
+
+## Страницы
+
+| Путь | Назначение |
+|------|------------|
+| `/login`, `/register` | Аккаунт |
+| `/dashboard` | Список проектов |
+| `/projects/:id` | Репозитории, сканы, quick connect |
+| `/review` | Быстрый review PR без webhook |
+| `/scans/:id` | Детали скана |
+
+## Сборка
+
+```bash
+npm run build   # → dist/
+```

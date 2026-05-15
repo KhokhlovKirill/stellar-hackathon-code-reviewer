@@ -76,13 +76,6 @@ def create_app() -> FastAPI:
     except ImportError:
         log.warning("admin_router_unavailable", phase="will be added in Phase 8")
 
-    try:
-        from aegis.web import router as web_router
-
-        app.include_router(web_router)
-    except ImportError:
-        log.warning("web_router_unavailable", phase="server-rendered control plane")
-
     return app
 
 

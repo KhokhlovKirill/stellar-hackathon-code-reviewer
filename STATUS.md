@@ -38,9 +38,9 @@ code-review/
 │   ├── config.example.yaml
 │   └── .env.example
 │
-├── frontend/                        # frontend boundary
-│   ├── templates/                   # текущие Jinja2 templates
-│   └── README.md                    # место для будущего frontend-приложения
+├── frontend/                        # React + Vite UI (Docker: nginx на :8099)
+│   ├── src/                         # SPA
+│   └── Dockerfile, nginx.conf
 │
 ├── Makefile                         # root wrapper для backend/docker команд
 ├── STATUS.md
@@ -52,27 +52,35 @@ code-review/
 └── .env                             # локальные секреты, не коммитить
 ```
 
-Текущий UI пока остаётся server-rendered Jinja2: Python routes находятся в
-`backend/aegis/web/routes.py`, сами шаблоны вынесены в `frontend/templates/`.
-Backend читает путь из `AEGIS_FRONTEND_TEMPLATES`.
-
-Локально default: `../frontend/templates` относительно `backend/`.
-В Docker default: `/app/frontend/templates`.
+**UI** — React SPA (`frontend/src/`). В Docker сервис `web` (nginx, порт **8099**)
+отдаёт статику и проксирует `/api`, webhooks, OpenAPI на `api`. Старый Jinja UI удалён.
 
 ---
 
-## Важные команды после разделения
+## Быстрый запуск (фронт + бэк в Docker)
+
+```bash
+# 1. .env в корне (скопировать backend/.env.example, заполнить AEGIS_VAULT_KEY)
+# 2. Поднять всё:
+make docker-up
+
+# UI:  http://localhost:8099
+# API: http://localhost:8099/api  (docs: /docs)
+```
+
+## Важные команды
 
 Из root:
 
 ```bash
-cd /Users/nikitasyzdykov/Desktop/code-review
-
 make backend-check
 make backend-test
 make docker-build
 make docker-up
 make docker-logs
+
+# Dev: UI с hot-reload (бэк в Docker, фронт локально)
+make frontend-dev   # http://localhost:5173
 ```
 
 Из backend:
@@ -114,21 +122,23 @@ docker compose -f backend/deploy/docker-compose.yml build
 docker compose -f deploy/docker-compose.yml build
 ```
 
-Compose использует build context root (`../..`), чтобы контейнер получил и
-`backend/`, и `frontend/`. В контейнер копируются:
+Сервисы:
 
-- `backend/aegis`
-- `backend/alembic`
-- `backend/alembic.ini`
-- `backend/config.example.yaml`
-- `frontend/templates`
+| Сервис | Порт (host) | Назначение |
+|--------|-------------|------------|
+| `web` | **8099** | React UI + nginx → api |
+| `api` | internal 8080 | FastAPI |
+| `worker` | — | ARQ |
+| `postgres`, `redis` | internal | данные |
+
+Образ `api`/`worker`: context root, `backend/deploy/Dockerfile`.
+Образ `web`: context root, `frontend/Dockerfile` (npm build + nginx).
 
 В Docker env:
 
 ```text
 AEGIS_DATABASE_URL=postgresql+asyncpg://aegis:aegis@postgres:5432/aegis
 AEGIS_REDIS_URL=redis://redis:6379/0
-AEGIS_FRONTEND_TEMPLATES=/app/frontend/templates
 LMSTUDIO_BASE_URL=http://host.docker.internal:1234/v1
 ```
 
@@ -184,7 +194,7 @@ GitHub webhook  →  http://87.242.94.247:8099
                          ↓ nginx proxy
                    VPS 127.0.0.1:18099
                          ↓ SSH reverse tunnel
-                   Mac localhost:8080  ←  uvicorn Aegis
+                   Mac localhost:8099  ←  Docker web (React + API proxy)
 ```
 
 Tunnel:
@@ -199,7 +209,7 @@ nohup bash start_tunnel.sh > /tmp/aegis_tunnel.log 2>&1 &
 
 | Функция | Статус |
 |---|---|
-| Web UI routes + Jinja templates from `frontend/templates` | работает |
+| React Web UI (Docker `web` :8099) + REST `/api` | работает |
 | REST API `/api/...` | работает |
 | GitHub/GitLab/Bitbucket webhook gateway | работает |
 | Quick Connect GitHub repo + webhook registration | работает |
@@ -237,8 +247,9 @@ docker compose -f backend/deploy/docker-compose.yml up -d
 3. Проверить:
 
 ```bash
-curl http://localhost:8080/healthz
-curl http://localhost:8080/readyz
+curl http://localhost:8099/healthz
+curl http://localhost:8099/readyz
+open http://localhost:8099/register
 ```
 
 4. После проверки закоммитить перенос и fixes:

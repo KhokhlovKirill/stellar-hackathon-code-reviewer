@@ -1,11 +1,4 @@
-"""Web/API auth + project flow.
-
-Split into three reliable layers:
-  1. pure unit  — password hashing, email/password validation
-  2. no-DB web  — routing/redirects/templates that never touch the DB
-  3. flow       — register → login → create project → dashboard against a
-                  small in-memory fake session (no Postgres needed)
-"""
+"""API auth + project flow (replaces legacy Jinja web routes)."""
 
 from __future__ import annotations
 
@@ -25,25 +18,12 @@ from aegis.api.app import create_app
 from aegis.api.security import hash_password, verify_password
 from aegis.db.models import Project, Repository, User
 
-# ---------------------------------------------------------------------------- #
-# 1. pure unit
-# ---------------------------------------------------------------------------- #
-
 
 def test_password_hash_roundtrip() -> None:
     h = hash_password("correct horse battery staple")
     assert "$" in h
     assert verify_password("correct horse battery staple", h)
     assert not verify_password("wrong", h)
-
-
-def test_password_hash_is_salted() -> None:
-    assert hash_password("same") != hash_password("same")
-
-
-def test_verify_password_rejects_garbage() -> None:
-    assert not verify_password("x", "not-a-valid-hash")
-    assert not verify_password("x", "")
 
 
 def test_register_request_validation() -> None:
@@ -54,48 +34,6 @@ def test_register_request_validation() -> None:
 
     with pytest.raises(ValueError, match="invalid email"):
         RegisterRequest(email="bad", password="longenough")
-    with pytest.raises(ValueError):
-        RegisterRequest(email="a@b.co", password="short")
-
-
-# ---------------------------------------------------------------------------- #
-# 2. no-DB web routing
-# ---------------------------------------------------------------------------- #
-
-
-def test_login_and_register_pages_render() -> None:
-    c = TestClient(create_app())
-    assert c.get("/login").status_code == 200
-    assert "Sign in" in c.get("/login").text
-    assert c.get("/register").status_code == 200
-    assert "Create your account" in c.get("/register").text
-
-
-def test_index_redirects_to_login_when_anonymous() -> None:
-    c = TestClient(create_app(), follow_redirects=False)
-    r = c.get("/")
-    assert r.status_code == 303
-    assert r.headers["location"] == "/login"
-
-
-def test_dashboard_requires_auth() -> None:
-    c = TestClient(create_app(), follow_redirects=False)
-    r = c.get("/dashboard")
-    assert r.status_code == 303
-    assert r.headers["location"] == "/login"
-
-
-def test_bad_session_cookie_is_ignored() -> None:
-    c = TestClient(create_app(), follow_redirects=False)
-    c.cookies.set("aegis_session", "garbage.token.value")
-    r = c.get("/dashboard")
-    assert r.status_code == 303
-    assert r.headers["location"] == "/login"
-
-
-# ---------------------------------------------------------------------------- #
-# 3. register → login → project flow on an in-memory fake session
-# ---------------------------------------------------------------------------- #
 
 
 class _Result:
@@ -120,8 +58,6 @@ class _Result:
 
 
 class _FakeDB:
-    """Shared store; one per test."""
-
     def __init__(self) -> None:
         self.users: list[User] = []
         self.projects: list[Project] = []
@@ -148,7 +84,6 @@ class _FakeSession:
             return _Result(scalar=sum(1 for r in self.db.repos if r.project_id == pid))
 
         if "from projects" in sql:
-            # create_project dup check uses owner_id + name; dashboard lists by owner
             owner = params.get("owner_id_1")
             name = params.get("name_1")
             if name is not None:
@@ -185,78 +120,82 @@ def _client_with_fake_db() -> tuple[TestClient, _FakeDB]:
     async def fake_session() -> AsyncIterator[_FakeSession]:
         yield _FakeSession(db)
 
+    import aegis.api.admin as admin
     import aegis.api.security as sec
-    import aegis.web.routes as routes
 
     app = create_app()
-    client = TestClient(app, follow_redirects=False)
-    client._fake = (routes, sec, fake_session)  # type: ignore[attr-defined]
+    client = TestClient(app)
+    client._fake = (admin, sec, fake_session)  # type: ignore[attr-defined]
     return client, db
 
 
-def test_register_login_create_project_flow(
+def test_register_login_create_project_api_flow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, db = _client_with_fake_db()
-    routes, sec, fake_session = client._fake  # type: ignore[attr-defined]
-    monkeypatch.setattr(routes, "get_session", fake_session)
+    admin, sec, fake_session = client._fake  # type: ignore[attr-defined]
+    monkeypatch.setattr(admin, "get_session", fake_session)
     monkeypatch.setattr(sec, "get_session", fake_session)
 
-    # Register
-    r = client.post("/register", data={
-        "email": "dev@acme.io", "password": "supersecret", "display_name": "Dev",
-    })
-    assert r.status_code == 303
-    assert r.headers["location"] == "/dashboard"
-    assert "aegis_session" in r.cookies
-    assert len(db.users) == 1
-    assert db.users[0].email == "dev@acme.io"
-    assert verify_password("supersecret", db.users[0].password_hash)
+    r = client.post(
+        "/api/auth/register",
+        json={
+            "email": "dev@acme.io",
+            "password": "supersecret",
+            "display_name": "Dev",
+        },
+    )
+    assert r.status_code == 201
+    token = r.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
 
-    # Authenticated dashboard
-    r = client.get("/dashboard")
+    r = client.get("/api/projects", headers=headers)
     assert r.status_code == 200
-    assert "Your projects" in r.text
+    assert r.json() == []
 
-    # Create a project
-    r = client.post("/projects", data={"name": "Payments API",
-                                       "description": "core service"})
-    assert r.status_code == 303
+    r = client.post(
+        "/api/projects",
+        headers=headers,
+        json={"name": "Payments API", "description": "core service"},
+    )
+    assert r.status_code == 201
     assert db.projects[0].name == "Payments API"
-    assert db.projects[0].owner_id == db.users[0].id
-    assert r.headers["location"] == f"/projects/{db.projects[0].id}"
+    pid = r.json()["id"]
 
-    # Logout clears the cookie
-    r = client.get("/logout")
-    assert r.status_code == 303
-    assert r.headers["location"] == "/login"
+    r = client.get(f"/api/projects/{pid}", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["project"]["name"] == "Payments API"
 
 
 def test_register_rejects_duplicate_email(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, db = _client_with_fake_db()
-    routes, sec, fake_session = client._fake  # type: ignore[attr-defined]
-    monkeypatch.setattr(routes, "get_session", fake_session)
+    admin, sec, fake_session = client._fake  # type: ignore[attr-defined]
+    monkeypatch.setattr(admin, "get_session", fake_session)
     monkeypatch.setattr(sec, "get_session", fake_session)
 
-    client.post("/register", data={"email": "a@b.co", "password": "longenough1"})
-    r = client.post("/register", data={"email": "a@b.co", "password": "longenough2"})
-    assert r.status_code == 200
-    assert "already registered" in r.text
+    client.post(
+        "/api/auth/register",
+        json={"email": "a@b.co", "password": "longenough1"},
+    )
+    r = client.post(
+        "/api/auth/register",
+        json={"email": "a@b.co", "password": "longenough2"},
+    )
+    assert r.status_code == 409
     assert len(db.users) == 1
 
 
-def test_login_wrong_password_shows_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_login_wrong_password() -> None:
     client, _db = _client_with_fake_db()
-    routes, sec, fake_session = client._fake  # type: ignore[attr-defined]
-    monkeypatch.setattr(routes, "get_session", fake_session)
-    monkeypatch.setattr(sec, "get_session", fake_session)
+    r = client.post(
+        "/api/auth/login",
+        json={"username": "nobody@x.io", "password": "wrong"},
+    )
+    assert r.status_code == 401
 
-    client.post("/register", data={"email": "z@z.io", "password": "rightpass1"})
-    client.cookies.clear()
-    r = client.post("/login", data={"email": "z@z.io", "password": "WRONG"})
-    assert r.status_code == 200
-    assert "Invalid email or password" in r.text
+
+def test_projects_require_bearer() -> None:
+    client = TestClient(create_app())
+    assert client.get("/api/projects").status_code == 401

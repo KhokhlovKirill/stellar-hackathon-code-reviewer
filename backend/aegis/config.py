@@ -32,10 +32,6 @@ class Settings(BaseSettings):
     env: Literal["dev", "prod"] = Field("dev", alias="AEGIS_ENV")
     config_file: str = Field("config.yaml", alias="AEGIS_CONFIG_FILE")
     log_level: str = Field("INFO", alias="AEGIS_LOG_LEVEL")
-    frontend_templates_dir: str = Field(
-        "../frontend/templates",
-        alias="AEGIS_FRONTEND_TEMPLATES",
-    )
 
     database_url: str = Field(..., alias="AEGIS_DATABASE_URL")
     redis_url: str = Field(..., alias="AEGIS_REDIS_URL")

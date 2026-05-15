@@ -1,12 +1,12 @@
 #!/bin/bash
-# SSH Reverse Tunnel: Mac:8080 → VPS:127.0.0.1:18099 → nginx:8099 → internet
+# SSH Reverse Tunnel: Mac:8099 → VPS:127.0.0.1:18099 → nginx:8099 → internet
 # Webhook URL: http://87.242.94.247:8099/webhooks/github
 
 VPS_HOST="87.242.94.247"
 VPS_USER="superadmin"
 SSH_KEY="$HOME/.ssh/vps_aegis_key"
 TUNNEL_PORT=18099   # on VPS (internal, nginx proxies to this)
-LOCAL_PORT=8080     # Aegis on Mac
+LOCAL_PORT=8099     # Docker web (nginx + React), proxies API
 
 echo "[tunnel] Starting SSH reverse tunnel..."
 echo "[tunnel] Webhook URL: http://${VPS_HOST}:8099/webhooks/github"

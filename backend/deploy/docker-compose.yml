@@ -8,7 +8,6 @@ x-app: &app
   environment:
     AEGIS_DATABASE_URL: postgresql+asyncpg://aegis:aegis@postgres:5432/aegis
     AEGIS_REDIS_URL: redis://redis:6379/0
-    AEGIS_FRONTEND_TEMPLATES: /app/frontend/templates
     # Override so containers reach LM Studio on the Mac host
     LMSTUDIO_BASE_URL: http://host.docker.internal:1234/v1
   depends_on:
@@ -25,7 +24,7 @@ services:
     command: >
       sh -c "alembic upgrade head &&
              uvicorn aegis.api.app:app --host 0.0.0.0 --port 8080"
-    ports: ["8080:8080"]
+    expose: ["8080"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz').status==200 else 1)"]
       interval: 15s
@@ -35,6 +34,15 @@ services:
   worker:
     <<: *app
     command: ["arq", "aegis.worker.main.WorkerSettings"]
+
+  web:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+    ports: ["8099:80"]
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
