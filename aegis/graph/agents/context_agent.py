@@ -8,7 +8,7 @@ from aegis.graph.state import SecurityGraphState
 from aegis.observability.logging import get_logger
 from aegis.pipeline.context.ast_parser import parse_python_ast, parse_js_ast
 from aegis.pipeline.context.import_resolver import extract_imports
-from aegis.pipeline.context.code_rag import search_similar_findings
+from aegis.pipeline.context.code_rag import build_code_rag_context
 
 log = get_logger(__name__)
 
@@ -63,18 +63,19 @@ async def context_agent(state: SecurityGraphState) -> SecurityGraphState:
             filename, imports = result
             import_graph[filename] = imports
 
-    # RAG lookup: search for similar past findings based on function names
-    rag_context = []
-    all_functions = []
-    for data in ast_context.values():
-        all_functions.extend(data.get("functions", []))
-
-    if all_functions:
-        try:
-            query = " ".join(all_functions[:10])
-            rag_context = await search_similar_findings(query, top_k=5)
-        except Exception as exc:
-            log.warning("context.rag_error", error=str(exc))
+    # RAG lookup: retrieve historically similar findings for each changed file.
+    rag_context: list[str] = []
+    try:
+        rag_result = await build_code_rag_context(
+            files=filtered_files,
+            ast_context=ast_context,
+            repo_slug=state.get("repo_full_name", ""),
+            repo_db_id=int(state.get("repo_id") or 0),
+        )
+        # Flatten dict[filename, list[str]] → flat list[str] for LLM agents
+        rag_context = [snip for snippets in rag_result.values() for snip in snippets if snip]
+    except Exception as exc:
+        log.warning("context.rag_error", error=str(exc))
 
     log.info(
         "context.complete",

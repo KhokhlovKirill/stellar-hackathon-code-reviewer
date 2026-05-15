@@ -117,6 +117,7 @@ risk_score_histogram = Histogram(
 prs_blocked_total = Counter(
     "aegis_prs_blocked_total",
     "Total PRs blocked due to high risk score",
+    ["repo_id"],
 )
 
 # ── Scanner ───────────────────────────────────────────────────────────────────
@@ -133,6 +134,13 @@ scanner_errors_total = Counter(
     "Total scanner execution errors",
     ["scanner"],
 )
+
+
+# ── Uppercase aliases used by agent modules ───────────────────────────────────
+# deterministic_agent imports SCANNER_DURATION; risk_agent imports PR_BLOCKED.
+
+SCANNER_DURATION = scanner_duration_seconds
+PR_BLOCKED = prs_blocked_total
 
 
 def setup_metrics() -> None:

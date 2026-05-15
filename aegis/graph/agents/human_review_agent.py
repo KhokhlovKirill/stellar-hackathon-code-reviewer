@@ -35,8 +35,9 @@ async def human_review_agent(state: SecurityGraphState) -> SecurityGraphState:
         decision=human_decision,
     )
 
-    # If already decided (resumed), pass through
-    if human_decision in ("approved", "rejected", "ignored"):
+    # If already decided (resumed), pass through.
+    # Values match HumanDecisionEnum: approve | reject | suppress | escalate | rerun
+    if human_decision in ("approve", "reject", "suppress", "escalate", "rerun"):
         log.info("human_review.already_decided", decision=human_decision)
         return {**state, "human_review_pending": False}
 
