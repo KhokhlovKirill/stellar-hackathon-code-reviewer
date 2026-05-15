@@ -218,3 +218,74 @@ class GitHubProvider(HttpMixin):
                 }
             ],
         )
+
+    async def get_default_branch(self, pr: PullRequest, token: str) -> str:
+        r = await self._request("GET", f"/repos/{pr.repo_slug}", token, "get_repo")
+        if r.status_code != 200:
+            raise ProviderError("github", "get_repo failed", r.status_code)
+        return str(r.json().get("default_branch", "main"))
+
+    async def create_branch(
+        self, pr: PullRequest, token: str, new_branch: str, from_sha: str
+    ) -> None:
+        r = await self._request(
+            "POST",
+            f"/repos/{pr.repo_slug}/git/refs",
+            token,
+            "create_branch",
+            json={"ref": f"refs/heads/{new_branch}", "sha": from_sha},
+        )
+        if r.status_code not in (200, 201, 422):
+            raise ProviderError("github", "create_branch failed", r.status_code)
+
+    async def create_or_update_file(
+        self,
+        pr: PullRequest,
+        token: str,
+        branch: str,
+        path: str,
+        content_b64: str,
+        message: str,
+        sha: str | None = None,
+    ) -> None:
+        payload: dict[str, str] = {
+            "message": message,
+            "content": content_b64,
+            "branch": branch,
+        }
+        if sha:
+            payload["sha"] = sha
+        r = await self._request(
+            "PUT",
+            f"/repos/{pr.repo_slug}/contents/{path}",
+            token,
+            "create_or_update_file",
+            json=payload,
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("github", "create_or_update_file failed", r.status_code)
+
+    async def open_pull_request(
+        self,
+        token: str,
+        repo_slug: str,
+        title: str,
+        body: str,
+        head_branch: str,
+        base_branch: str,
+    ) -> str:
+        r = await self._request(
+            "POST",
+            f"/repos/{repo_slug}/pulls",
+            token,
+            "open_pull_request",
+            json={
+                "title": title,
+                "body": body,
+                "head": head_branch,
+                "base": base_branch,
+            },
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("github", "open_pull_request failed", r.status_code)
+        return str(r.json().get("html_url", ""))

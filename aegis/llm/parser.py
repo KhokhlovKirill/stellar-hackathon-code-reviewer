@@ -1,4 +1,13 @@
-"""Parse and validate LLM JSON findings."""
+"""Parse and validate LLM JSON findings.
+
+Handles two schemas:
+- Aegis canonical: {file, line, cwe, severity, confidence, title, rationale, exploit, fix}
+- don-agent-v3 native: {file, line_number, cwe (int), severity, confidence (str),
+    title, description, impact, code_snippet, remediation}
+
+Both are normalised into Finding objects. The normaliser runs before Pydantic
+validation so downstream is always canonical.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +17,51 @@ from typing import Any
 from pydantic import BaseModel, Field, ValidationError
 
 from aegis.schemas import Finding, FindingSource, Severity
+
+_CONFIDENCE_MAP = {"low": 0.45, "medium": 0.65, "high": 0.85, "very high": 0.95}
+
+
+def _normalise_finding(raw: dict[str, Any]) -> dict[str, Any]:
+    """Map don-agent-v3 native fields to the canonical Aegis schema."""
+    out = dict(raw)
+
+    # line_number → line
+    if "line" not in out and "line_number" in out:
+        out["line"] = out.pop("line_number")
+
+    # cwe: int → "CWE-N" string
+    cwe = out.get("cwe")
+    if isinstance(cwe, int):
+        out["cwe"] = f"CWE-{cwe}"
+    elif isinstance(cwe, str) and cwe.isdigit():
+        out["cwe"] = f"CWE-{cwe}"
+
+    # confidence: string label → float
+    conf = out.get("confidence")
+    if isinstance(conf, str):
+        out["confidence"] = _CONFIDENCE_MAP.get(conf.lower().strip(), 0.7)
+
+    # rationale: merge description + impact
+    if "rationale" not in out or not out["rationale"]:
+        parts = [out.pop("description", ""), out.pop("impact", "")]
+        out["rationale"] = " ".join(p for p in parts if p).strip() or "no rationale"
+    else:
+        out.pop("description", None)
+        out.pop("impact", None)
+
+    # exploit: code_snippet
+    if "exploit" not in out or not out["exploit"]:
+        out["exploit"] = out.pop("code_snippet", None)
+    else:
+        out.pop("code_snippet", None)
+
+    # fix: remediation
+    if "fix" not in out or not out["fix"]:
+        out["fix"] = out.pop("remediation", None)
+    else:
+        out.pop("remediation", None)
+
+    return out
 
 
 class _LLMFinding(BaseModel):
@@ -76,8 +130,10 @@ def parse_findings(
     diff_positions: dict[tuple[str, int], int | None],
 ) -> list[Finding]:
     raw = _json_object(content)
+    # Normalise each finding (handles don-agent-v3 native schema)
+    normalised_items = [_normalise_finding(item) for item in raw.get("findings", [])]
     try:
-        env = _LLMEnvelope.model_validate(raw)
+        env = _LLMEnvelope.model_validate({"findings": normalised_items})
     except ValidationError:
         return []
 

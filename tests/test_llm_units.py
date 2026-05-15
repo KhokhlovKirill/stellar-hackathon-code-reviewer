@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from aegis.llm.parser import finding_schema, parse_findings
+from aegis.llm.parser import _normalise_finding, finding_schema, parse_findings
 from aegis.llm.prompt import review_messages
 from aegis.schemas import (
     DiffLine,
@@ -88,6 +88,73 @@ def test_parse_findings_keeps_only_changed_lines() -> None:
     assert len(parsed) == 1
     assert parsed[0].line == 7
     assert parsed[0].diff_position == 3
+
+
+def test_normalise_finding_don_agent_v3_format() -> None:
+    """don-agent-v3 native schema is mapped to Aegis canonical schema."""
+    raw = {
+        "file": "auth/login.py",
+        "line_number": 12,
+        "cwe": 89,
+        "severity": "high",
+        "confidence": "high",
+        "title": "SQL Injection",
+        "description": "User input concatenated into SQL.",
+        "impact": "Auth bypass possible.",
+        "code_snippet": "query = f\"SELECT * FROM users WHERE id = '{uid}'\"",
+        "remediation": "Use parameterized queries.",
+    }
+    out = _normalise_finding(raw)
+    assert out["line"] == 12
+    assert out["cwe"] == "CWE-89"
+    assert isinstance(out["confidence"], float)
+    assert out["confidence"] == 0.85
+    assert "concatenated" in out["rationale"]
+    assert out["exploit"] is not None and "SELECT" in out["exploit"]
+    assert out["fix"] is not None and "parameterized" in out["fix"]
+    assert "line_number" not in out
+
+
+def test_normalise_finding_string_cwe_passthrough() -> None:
+    raw = {
+        "file": "x.py", "line": 5,
+        "cwe": "CWE-798", "severity": "critical",
+        "confidence": 0.9, "title": "secret",
+        "rationale": "hardcoded", "exploit": None, "fix": None,
+    }
+    out = _normalise_finding(raw)
+    assert out["cwe"] == "CWE-798"
+    assert out["confidence"] == 0.9
+
+
+def test_parse_findings_accepts_don_agent_native() -> None:
+    """parse_findings handles don-agent-v3 output without crashing."""
+    content = json.dumps({
+        "findings": [
+            {
+                "file": "app/db.py",
+                "line_number": 7,
+                "cwe": 89,
+                "severity": "high",
+                "confidence": "high",
+                "title": "SQL injection",
+                "description": "concat",
+                "impact": "bypass",
+                "code_snippet": "x + sql",
+                "remediation": "use params",
+            }
+        ]
+    })
+    parsed = parse_findings(
+        content,
+        source=FindingSource.LLM_A,
+        changed_lines={"app/db.py": {7}},
+        diff_positions={("app/db.py", 7): 3},
+    )
+    assert len(parsed) == 1
+    assert parsed[0].line == 7
+    assert parsed[0].cwe == "CWE-89"
+    assert parsed[0].confidence == 0.85
 
 
 def test_review_prompt_marks_diff_as_untrusted_data() -> None:

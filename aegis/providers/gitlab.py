@@ -218,6 +218,93 @@ class GitLabProvider(HttpMixin):
         d = r.json()
         return DiscussionThread(thread_id=thread_id, pr_id=pr.pr_id, comments=d.get("notes", []))
 
+    async def get_default_branch(self, pr: PullRequest, token: str) -> str:
+        r = await self._request(
+            "GET", f"/projects/{self._pid(pr)}", token, "get_repo"
+        )
+        if r.status_code != 200:
+            raise ProviderError("gitlab", "get_repo failed", r.status_code)
+        return str(r.json().get("default_branch", "main"))
+
+    async def create_branch(
+        self, pr: PullRequest, token: str, new_branch: str, from_sha: str
+    ) -> None:
+        from urllib.parse import quote as _q
+        r = await self._request(
+            "POST",
+            f"/projects/{self._pid(pr)}/repository/branches",
+            token,
+            "create_branch",
+            json={"branch": new_branch, "ref": from_sha},
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("gitlab", "create_branch failed", r.status_code)
+        _ = _q  # imported for future use
+
+    async def create_or_update_file(
+        self,
+        pr: PullRequest,
+        token: str,
+        branch: str,
+        path: str,
+        content_b64: str,
+        message: str,
+        sha: str | None = None,
+    ) -> None:
+        from urllib.parse import quote as _q
+        encoded = _q(path, safe="")
+        # Try create first; if 400 (already exists) use PUT to update.
+        payload = {
+            "branch": branch,
+            "content": content_b64,
+            "commit_message": message,
+            "encoding": "base64",
+        }
+        r = await self._request(
+            "POST",
+            f"/projects/{self._pid(pr)}/repository/files/{encoded}",
+            token,
+            "create_file",
+            json=payload,
+        )
+        if r.status_code in (200, 201):
+            return
+        r = await self._request(
+            "PUT",
+            f"/projects/{self._pid(pr)}/repository/files/{encoded}",
+            token,
+            "update_file",
+            json=payload,
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("gitlab", "create_or_update_file failed", r.status_code)
+
+    async def open_pull_request(
+        self,
+        token: str,
+        repo_slug: str,
+        title: str,
+        body: str,
+        head_branch: str,
+        base_branch: str,
+    ) -> str:
+        pid = quote(repo_slug, safe="")
+        r = await self._request(
+            "POST",
+            f"/projects/{pid}/merge_requests",
+            token,
+            "open_pull_request",
+            json={
+                "title": title,
+                "description": body,
+                "source_branch": head_branch,
+                "target_branch": base_branch,
+            },
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("gitlab", "open_pull_request failed", r.status_code)
+        return str(r.json().get("web_url", ""))
+
 
 def _parse_gitlab_diff(diff: str) -> list[Hunk]:
     """Parse a single-file GitLab diff body (no ---/+++ header) into Hunks with

@@ -173,3 +173,75 @@ class BitbucketProvider(HttpMixin):
             raise ProviderError("bitbucket", "get_thread failed", r.status_code)
         d = r.json()
         return DiscussionThread(thread_id=thread_id, pr_id=pr.pr_id, comments=[d])
+
+    async def get_default_branch(self, pr: PullRequest, token: str) -> str:
+        r = await self._request(
+            "GET", f"/repositories/{pr.repo_slug}", token, "get_repo"
+        )
+        if r.status_code != 200:
+            raise ProviderError("bitbucket", "get_repo failed", r.status_code)
+        return str(r.json().get("mainbranch", {}).get("name", "main"))
+
+    async def create_branch(
+        self, pr: PullRequest, token: str, new_branch: str, from_sha: str
+    ) -> None:
+        r = await self._request(
+            "POST",
+            f"/repositories/{pr.repo_slug}/refs/branches",
+            token,
+            "create_branch",
+            json={"name": new_branch, "target": {"hash": from_sha}},
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("bitbucket", "create_branch failed", r.status_code)
+
+    async def create_or_update_file(
+        self,
+        pr: PullRequest,
+        token: str,
+        branch: str,
+        path: str,
+        content_b64: str,
+        message: str,
+        sha: str | None = None,
+    ) -> None:
+        import base64
+        content_bytes = base64.b64decode(content_b64)
+        r = await self._request(
+            "POST",
+            f"/repositories/{pr.repo_slug}/src",
+            token,
+            "create_or_update_file",
+            data={
+                path: content_bytes.decode(),
+                "message": message,
+                "branch": branch,
+            },
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("bitbucket", "create_or_update_file failed", r.status_code)
+
+    async def open_pull_request(
+        self,
+        token: str,
+        repo_slug: str,
+        title: str,
+        body: str,
+        head_branch: str,
+        base_branch: str,
+    ) -> str:
+        r = await self._request(
+            "POST",
+            f"/repositories/{repo_slug}/pullrequests",
+            token,
+            "open_pull_request",
+            json={
+                "title": title,
+                "description": body,
+                "source": {"branch": {"name": head_branch}},
+                "destination": {"branch": {"name": base_branch}},
+            },
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("bitbucket", "open_pull_request failed", r.status_code)
+        return str(r.json().get("links", {}).get("html", {}).get("href", ""))

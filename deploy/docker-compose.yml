@@ -69,7 +69,10 @@ services:
     profiles: ["obs"]
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
-    volumes: ["./grafana/provisioning:/etc/grafana/provisioning:ro"]
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/aegis-overview.json
+    volumes:
+      - "./grafana/provisioning:/etc/grafana/provisioning:ro"
+      - "./grafana/dashboards:/var/lib/grafana/dashboards:ro"
     ports: ["3000:3000"]
     depends_on: ["prometheus"]
 

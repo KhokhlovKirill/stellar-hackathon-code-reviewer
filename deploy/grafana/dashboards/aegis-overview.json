@@ -1,0 +1,207 @@
+{
+  "title": "Aegis — Security Review Overview",
+  "uid": "aegis-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Scans per minute",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(aegis_scans_total[5m])",
+          "legendFormat": "{{provider}} {{status}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Queue depth",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 6 },
+      "targets": [
+        {
+          "expr": "aegis_queue_depth",
+          "legendFormat": "queue"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "thresholds": {
+          "steps": [
+            { "color": "green", "value": 0 },
+            { "color": "yellow", "value": 50 },
+            { "color": "red", "value": 100 }
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Scan latency p50/p95/p99 (s)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 6 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(aegis_scan_duration_seconds_bucket[5m]))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(aegis_scan_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(aegis_scan_duration_seconds_bucket[5m]))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Findings by severity",
+      "type": "piechart",
+      "gridPos": { "x": 0, "y": 6, "w": 8, "h": 7 },
+      "targets": [
+        {
+          "expr": "sum by (severity) (increase(aegis_findings_total[24h]))",
+          "legendFormat": "{{severity}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Findings by source",
+      "type": "barchart",
+      "gridPos": { "x": 8, "y": 6, "w": 8, "h": 7 },
+      "targets": [
+        {
+          "expr": "sum by (source) (increase(aegis_findings_total[24h]))",
+          "legendFormat": "{{source}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Top CWEs (24h)",
+      "type": "bargauge",
+      "gridPos": { "x": 16, "y": 6, "w": 8, "h": 7 },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (cwe) (increase(aegis_findings_total[24h])))",
+          "legendFormat": "{{cwe}}"
+        }
+      ],
+      "options": { "orientation": "horizontal" }
+    },
+    {
+      "id": 7,
+      "title": "LLM tier status",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 13, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "aegis_llm_tier_down",
+          "legendFormat": "{{tier}}"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "thresholds": {
+          "steps": [
+            { "color": "green", "value": 0 },
+            { "color": "red", "value": 1 }
+          ]
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "LLM latency p95 by tier (s)",
+      "type": "timeseries",
+      "gridPos": { "x": 6, "y": 13, "w": 10, "h": 4 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(aegis_llm_latency_seconds_bucket[5m]))",
+          "legendFormat": "{{tier}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "LLM cost USD/hr",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 13, "w": 8, "h": 4 },
+      "targets": [
+        {
+          "expr": "rate(aegis_llm_cost_usd_total[1h]) * 3600",
+          "legendFormat": "{{tier}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Tokens saved (diff-only vs full-repo)",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 17, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "increase(aegis_tokens_saved_total[24h])",
+          "legendFormat": "tokens saved 24h"
+        }
+      ],
+      "options": { "colorMode": "background" }
+    },
+    {
+      "id": 11,
+      "title": "LLM fallbacks per hour",
+      "type": "timeseries",
+      "gridPos": { "x": 6, "y": 17, "w": 10, "h": 4 },
+      "targets": [
+        {
+          "expr": "rate(aegis_llm_fallback_total[1h]) * 3600",
+          "legendFormat": "{{from_tier}} → {{to_tier}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "VCS API errors",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 17, "w": 8, "h": 4 },
+      "targets": [
+        {
+          "expr": "rate(aegis_vcs_calls_total{status!~\"2..\"}[5m])",
+          "legendFormat": "{{provider}} {{op}} {{status}}"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Webhook throughput",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 21, "w": 12, "h": 5 },
+      "targets": [
+        {
+          "expr": "rate(aegis_webhooks_total[5m])",
+          "legendFormat": "{{provider}} {{status}}"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Filter skipped files/hr",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 21, "w": 12, "h": 5 },
+      "targets": [
+        {
+          "expr": "rate(aegis_filter_skipped_total[1h]) * 3600",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    }
+  ]
+}
