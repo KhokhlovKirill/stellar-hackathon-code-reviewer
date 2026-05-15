@@ -1,34 +1,6 @@
-<<<<<<< Updated upstream
-[project]
-name = "aegis"
-version = "0.1.0"
-description = "Aegis — AI security reviewer for Pull/Merge Requests (GitHub/GitLab/Bitbucket)"
-requires-python = ">=3.12"
-dependencies = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "pydantic>=2.9",
-    "pydantic-settings>=2.6",
-    "httpx>=0.27",
-    "arq>=0.26",
-    "redis>=5.2",
-    "sqlalchemy>=2.0.36",
-    "alembic>=1.14",
-    "asyncpg>=0.30",
-    "psycopg[binary]>=3.2",
-    "structlog>=24.4",
-    "prometheus-client>=0.21",
-    "unidiff>=0.7.5",
-    "cryptography>=44.0",
-    "jinja2>=3.1",
-    "python-multipart>=0.0.12",
-    "pyyaml>=6.0",
-    "tenacity>=9.0",
-    "bandit>=1.8",
-=======
 [build-system]
 requires = ["setuptools>=70", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "aegis"
@@ -43,6 +15,7 @@ dependencies = [
 
     # LangGraph / LangChain
     "langgraph>=0.2.0",
+    "langgraph-checkpoint-postgres>=2.0.0",
     "langchain-core>=0.3.0",
     "langchain-openai>=0.2.0",
     "langchain-anthropic>=0.2.0",
@@ -52,6 +25,7 @@ dependencies = [
     # Database
     "sqlalchemy[asyncio]>=2.0.0",
     "asyncpg>=0.29.0",
+    "psycopg2-binary>=2.9.9",
     "alembic>=1.13.0",
     "pgvector>=0.3.0",
 
@@ -71,8 +45,12 @@ dependencies = [
     "cryptography>=42.0.0",
     "passlib[bcrypt]>=1.7.4",
 
-    # Serialization
+    # Serialization / config
     "orjson>=3.10.0",
+    "pyyaml>=6.0",
+
+    # Diff parsing
+    "unidiff>=0.7.5",
 
     # Logging / Observability
     "structlog>=24.0.0",
@@ -91,7 +69,7 @@ dependencies = [
     # Security scanning helpers
     "bandit>=1.7.0",
 
-    # Embeddings
+    # Embeddings (optional local fallback via sentence-transformers)
     "openai>=1.40.0",
     "tiktoken>=0.7.0",
 
@@ -102,37 +80,24 @@ dependencies = [
     "tenacity>=9.0.0",
     "cachetools>=5.4.0",
     "pytz>=2024.1",
->>>>>>> Stashed changes
 ]
 
 [project.optional-dependencies]
 dev = [
-<<<<<<< Updated upstream
-    "pytest>=8.3",
-    "pytest-asyncio>=0.24",
-    "respx>=0.21",
-    "ruff>=0.7",
-    "mypy>=1.13",
-    "types-pyyaml>=6.0",
-]
-
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools.packages.find]
-=======
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "httpx>=0.27.0",
     "anyio>=4.4.0",
     "ruff>=0.5.0",
     "mypy>=1.10.0",
+    "respx>=0.21.0",
+]
+embeddings = [
+    "sentence-transformers>=3.0.0",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
->>>>>>> Stashed changes
 include = ["aegis*"]
 
 [tool.ruff]
@@ -140,36 +105,17 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-<<<<<<< Updated upstream
-select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "RUF"]
-ignore = ["S101", "S104"]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S", "B"]
-"eval/*" = ["S"]
-
-[tool.mypy]
-python_version = "3.12"
-strict = true
-ignore_missing_imports = true
-plugins = ["pydantic.mypy"]
-=======
-select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = false
 ignore_missing_imports = true
->>>>>>> Stashed changes
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-<<<<<<< Updated upstream
-filterwarnings = ["error"]
-
-[tool.aegis]
-# marker package config lives in config.yaml / env (see aegis/config.py)
-=======
->>>>>>> Stashed changes

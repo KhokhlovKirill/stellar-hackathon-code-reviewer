@@ -1,226 +1,30 @@
-<<<<<<< Updated upstream
-"""Backend REST API consumed by the Admin Portal frontend."""
-
-from __future__ import annotations
-
-import hmac
-from typing import Any
-
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from sqlalchemy import func, select
-
-from aegis.api.auth import issue_token, require_admin
-from aegis.config import get_settings
-from aegis.db import get_session
-from aegis.db.models import FindingRow, RepoPolicy, RepoSecret, Repository, Scan
-from aegis.schemas import Provider
-from aegis.vault import encrypt
-
-router = APIRouter(prefix="/api", tags=["admin"])
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"  # noqa: S105 - OAuth token type, not a password
-
-
-class RepoCreate(BaseModel):
-    provider: Provider
-    external_id: str
-    slug: str
-    access_token: str = Field(min_length=1)
-    webhook_secret: str = Field(min_length=1)
-    severity_gate: str = "medium"
-    merge_block: str = "critical"
-    ignore_globs: list[str] = Field(default_factory=list)
-    ensemble_profile: str = "det+don+judge"
-    lang: str = "ru"
-
-
-class RepoOut(BaseModel):
-    id: int
-    provider: str
-    external_id: str
-    slug: str
-    status: str
-    policy: dict[str, Any]
-
-
-@router.post("/auth/login", response_model=LoginResponse)
-async def login(req: LoginRequest) -> LoginResponse:
-    settings = get_settings()
-    if not settings.admin_password:
-        raise HTTPException(status_code=503, detail="admin password is not configured")
-    if req.username != settings.admin_user or not hmac.compare_digest(
-        req.password, settings.admin_password
-    ):
-        raise HTTPException(status_code=401, detail="invalid credentials")
-    return LoginResponse(access_token=issue_token(req.username))
-
-
-@router.get("/repos", response_model=list[RepoOut])
-async def list_repos(_: str = Depends(require_admin)) -> list[RepoOut]:
-    async with get_session() as session:
-        repos = (await session.execute(select(Repository))).scalars().all()
-        return [_repo_out(repo) for repo in repos]
-
-
-@router.post("/repos", response_model=RepoOut)
-async def create_repo(req: RepoCreate, actor: str = Depends(require_admin)) -> RepoOut:
-    async with get_session() as session:
-        existing = (
-            await session.execute(
-                select(Repository).where(
-                    Repository.provider == req.provider.value,
-                    Repository.external_id == req.external_id,
-                )
-            )
-        ).scalar_one_or_none()
-        repo = existing or Repository(
-            provider=req.provider.value,
-            external_id=req.external_id,
-            slug=req.slug,
-            status="active",
-        )
-        repo.slug = req.slug
-        if existing is None:
-            session.add(repo)
-            await session.flush()
-        session.add(
-            RepoSecret(
-                repo_id=repo.id,
-                kind="access_token",
-                ciphertext=encrypt(req.access_token),
-            )
-        )
-        session.add(
-            RepoSecret(
-                repo_id=repo.id,
-                kind="webhook_secret",
-                ciphertext=encrypt(req.webhook_secret),
-            )
-        )
-        policy = repo.policy or RepoPolicy(repo_id=repo.id)
-        policy.severity_gate = req.severity_gate
-        policy.merge_block = req.merge_block
-        policy.ignore_globs = req.ignore_globs
-        policy.ensemble_profile = req.ensemble_profile
-        policy.lang = req.lang
-        session.add(policy)
-        await session.flush()
-        _ = actor
-        return _repo_out(repo)
-
-
-@router.get("/scans")
-async def list_scans(_: str = Depends(require_admin)) -> list[dict[str, Any]]:
-    async with get_session() as session:
-        rows = (
-            await session.execute(select(Scan).order_by(Scan.started_at.desc()).limit(100))
-        ).scalars().all()
-        return [
-            {
-                "id": s.id,
-                "provider": s.provider,
-                "repo_slug": s.repo_slug,
-                "pr_id": s.pr_id,
-                "status": s.status,
-                "risk_score": s.risk_score,
-                "risk_label": s.risk_label,
-                "started_at": s.started_at.isoformat(),
-                "finished_at": s.finished_at.isoformat() if s.finished_at else None,
-            }
-            for s in rows
-        ]
-
-
-@router.get("/scans/{scan_id}")
-async def scan_detail(scan_id: str, _: str = Depends(require_admin)) -> dict[str, Any]:
-    async with get_session() as session:
-        scan = (await session.execute(select(Scan).where(Scan.id == scan_id))).scalar_one_or_none()
-        if scan is None:
-            raise HTTPException(status_code=404, detail="scan not found")
-        findings = (
-            await session.execute(select(FindingRow).where(FindingRow.scan_id == scan_id))
-        ).scalars().all()
-        return {
-            "scan": {
-                "id": scan.id,
-                "status": scan.status,
-                "risk_score": scan.risk_score,
-                "risk_label": scan.risk_label,
-                "decision": scan.decision,
-                "files_scanned": scan.files_scanned,
-                "files_skipped": scan.files_skipped,
-                "degraded": scan.degraded,
-            },
-            "findings": [
-                {
-                    "fingerprint": f.fingerprint,
-                    "file": f.file,
-                    "line": f.line,
-                    "cwe": f.cwe,
-                    "severity": f.severity,
-                    "title": f.title,
-                    "rationale": f.rationale,
-                    "fix": f.fix,
-                }
-                for f in findings
-            ],
-        }
-
-
-@router.get("/stats")
-async def stats(_: str = Depends(require_admin)) -> dict[str, Any]:
-    async with get_session() as session:
-        scans = int((await session.execute(select(func.count(Scan.id)))).scalar_one())
-        findings = int((await session.execute(select(func.count(FindingRow.id)))).scalar_one())
-        blocked = int(
-            (
-                await session.execute(
-                    select(func.count(Scan.id)).where(Scan.risk_label.in_(["high", "critical"]))
-                )
-            ).scalar_one()
-        )
-        return {"scans": scans, "findings": findings, "blocked_or_high_risk": blocked}
-
-
-def _repo_out(repo: Repository) -> RepoOut:
-    policy = repo.policy
-    return RepoOut(
-        id=repo.id,
-        provider=repo.provider,
-        external_id=repo.external_id,
-        slug=repo.slug,
-        status=repo.status,
-        policy={
-            "severity_gate": policy.severity_gate if policy else "medium",
-            "merge_block": policy.merge_block if policy else "critical",
-            "ignore_globs": policy.ignore_globs if policy else [],
-            "ensemble_profile": policy.ensemble_profile if policy else "det+don+judge",
-            "lang": policy.lang if policy else "ru",
-        },
-    )
-=======
 """Admin REST API endpoints for repositories, scans, findings, and knowledge base."""
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
+from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aegis.api.auth import get_current_user
+from aegis.config import get_settings
+from aegis.db.models import (
+    FalsePositive,
+    Finding,
+    GraphExecution,
+    GraphStatusEnum,
+    HumanDecisionEnum,
+    HumanReview,
+    ProviderEnum,
+    PullRequest,
+    Repository,
+    SeverityEnum,
+)
 from aegis.db.session import get_db
 from aegis.observability.logging import get_logger
 
@@ -239,7 +43,7 @@ class RegisterRepoRequest(BaseModel):
     full_name: str  # "org/repo"
     access_token: str
     webhook_secret: str | None = None
-    settings: dict = {}
+    settings: dict = Field(default_factory=dict)
 
 
 class RepoResponse(BaseModel):
@@ -281,42 +85,58 @@ class FalsePositiveRequest(BaseModel):
     reason: str | None = None
 
 
+_HUMAN_DECISION_API = {
+    "approved": HumanDecisionEnum.approve,
+    "rejected": HumanDecisionEnum.reject,
+    "ignored": HumanDecisionEnum.suppress,
+}
+
+
 # ── Repository Management ─────────────────────────────────────────────────────
 
 @router.post("/repos", response_model=RepoResponse)
-async def register_repo(request: RegisterRepoRequest, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
+async def register_repo(
+    request: RegisterRepoRequest,
+    user: Auth,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RepoResponse:
     """Register a repository for security scanning."""
-    from aegis.db.models import Repository
-    from sqlalchemy import select
-    from cryptography.fernet import Fernet
-    from aegis.config import get_settings
+    try:
+        prov = ProviderEnum(request.provider.lower())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid provider") from exc
 
     settings = get_settings()
     f = Fernet(settings.fernet_key.encode())
 
-    # Encrypt tokens
     encrypted_token = f.encrypt(request.access_token.encode()).decode()
-    encrypted_secret = f.encrypt(request.webhook_secret.encode()).decode() if request.webhook_secret else None
+    encrypted_secret = (
+        f.encrypt(request.webhook_secret.encode()).decode() if request.webhook_secret else None
+    )
 
-    # Check if already registered
-    existing = await db.execute(
+    result = await db.execute(
         select(Repository).where(
-            Repository.provider == request.provider,
-            Repository.full_name == request.full_name,
+            Repository.provider == prov,
+            Repository.slug == request.full_name,
         )
     )
-    if existing.scalar_one_or_none():
+    if result.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Repository already registered")
 
+    repo_url = (
+        f"https://github.com/{request.full_name}"
+        if prov == ProviderEnum.github
+        else f"https://gitlab.com/{request.full_name}"
+    )
+
     repo = Repository(
-        id=uuid.uuid4(),
-        provider=request.provider,
-        full_name=request.full_name,
-        access_token=encrypted_token,
-        webhook_secret=encrypted_secret,
+        provider=prov,
+        slug=request.full_name,
+        url=repo_url,
+        token_encrypted=encrypted_token,
+        webhook_secret_encrypted=encrypted_secret,
         settings_json=request.settings,
-        active=True,
-        created_at=datetime.now(timezone.utc),
+        is_active=True,
     )
     db.add(repo)
     await db.commit()
@@ -325,27 +145,24 @@ async def register_repo(request: RegisterRepoRequest, user: Auth, db: Annotated[
     log.info("admin.repo_registered", repo=request.full_name)
     return RepoResponse(
         id=str(repo.id),
-        provider=repo.provider,
-        full_name=repo.full_name,
-        active=repo.active,
+        provider=repo.provider.value if hasattr(repo.provider, "value") else str(repo.provider),
+        full_name=repo.slug,
+        active=repo.is_active,
         created_at=repo.created_at.isoformat(),
     )
 
 
 @router.get("/repos", response_model=list[RepoResponse])
-async def list_repos(user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
+async def list_repos(user: Auth, db: Annotated[AsyncSession, Depends(get_db)]) -> list[RepoResponse]:
     """List all registered repositories."""
-    from aegis.db.models import Repository
-    from sqlalchemy import select
-
     result = await db.execute(select(Repository).order_by(Repository.created_at.desc()))
     repos = result.scalars().all()
     return [
         RepoResponse(
             id=str(r.id),
-            provider=r.provider,
-            full_name=r.full_name,
-            active=r.active,
+            provider=r.provider.value if hasattr(r.provider, "value") else str(r.provider),
+            full_name=r.slug,
+            active=r.is_active,
             created_at=r.created_at.isoformat(),
         )
         for r in repos
@@ -353,31 +170,30 @@ async def list_repos(user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
 
 
 @router.delete("/repos/{repo_id}", status_code=204)
-async def delete_repo(repo_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
+async def delete_repo(repo_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]) -> None:
     """Remove a registered repository."""
-    from aegis.db.models import Repository
-    from sqlalchemy import select
+    try:
+        rid = int(repo_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid repository id") from exc
 
-    result = await db.execute(select(Repository).where(Repository.id == uuid.UUID(repo_id)))
+    result = await db.execute(select(Repository).where(Repository.id == rid))
     repo = result.scalar_one_or_none()
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
 
-    await db.delete(repo)
+    db.delete(repo)
     await db.commit()
 
 
 # ── Scan Management ───────────────────────────────────────────────────────────
 
 @router.get("/scans/{scan_id}", response_model=ScanStatusResponse)
-async def get_scan_status(scan_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
+async def get_scan_status(
+    scan_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]
+) -> ScanStatusResponse:
     """Get the status of a specific scan."""
-    from aegis.db.models import GraphExecution, PullRequest
-    from sqlalchemy import select
-
-    result = await db.execute(
-        select(GraphExecution).where(GraphExecution.scan_id == scan_id)
-    )
+    result = await db.execute(select(GraphExecution).where(GraphExecution.scan_id == scan_id))
     execution = result.scalar_one_or_none()
     if not execution:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -387,24 +203,31 @@ async def get_scan_status(scan_id: str, user: Auth, db: Annotated[AsyncSession, 
 
     return ScanStatusResponse(
         scan_id=execution.scan_id,
-        status=execution.status,
+        status=(
+            execution.status.value
+            if hasattr(execution.status, "value")
+            else str(execution.status)
+        ),
         current_node=execution.current_node,
         risk_score=pr.risk_score if pr else None,
-        findings=pr.finding_count if pr else None,
-        created_at=execution.created_at.isoformat(),
+        findings=pr.findings_count if pr else None,
+        created_at=execution.started_at.isoformat(),
     )
 
 
 @router.post("/scans/{scan_id}/cancel", status_code=202)
-async def cancel_scan(scan_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
+async def cancel_scan(scan_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]) -> dict:
     """Cancel a running scan."""
-    from aegis.db.models import GraphExecution
-    from sqlalchemy import update
-
     await db.execute(
         update(GraphExecution)
-        .where(GraphExecution.scan_id == scan_id, GraphExecution.status == "running")
-        .values(status="cancelled", updated_at=datetime.now(timezone.utc))
+        .where(
+            GraphExecution.scan_id == scan_id,
+            GraphExecution.status == GraphStatusEnum.running,
+        )
+        .values(
+            status=GraphStatusEnum.interrupted,
+            finished_at=datetime.now(timezone.utc),
+        )
     )
     await db.commit()
     return {"status": "cancelled", "scan_id": scan_id}
@@ -418,44 +241,36 @@ async def submit_human_review(
     request: HumanReviewRequest,
     user: Auth,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> dict:
     """Submit a human review decision to resume a paused graph."""
-    from aegis.db.models import HumanReview, GraphExecution
     from aegis.graph.runtime import resume_graph
-    from sqlalchemy import select
 
-    if request.decision not in ("approved", "rejected", "ignored"):
-        raise HTTPException(status_code=400, detail="Decision must be: approved, rejected, or ignored")
+    if request.decision not in _HUMAN_DECISION_API:
+        raise HTTPException(
+            status_code=400,
+            detail="Decision must be: approved, rejected, or ignored",
+        )
 
-    # Find the execution
-    result = await db.execute(
-        select(GraphExecution).where(GraphExecution.scan_id == scan_id)
-    )
+    result = await db.execute(select(GraphExecution).where(GraphExecution.scan_id == scan_id))
     execution = result.scalar_one_or_none()
     if not execution:
         raise HTTPException(status_code=404, detail="Scan not found")
 
-    # Save review
     review = HumanReview(
-        id=uuid.uuid4(),
         scan_id=scan_id,
-        pr_id=execution.pr_id,
-        decision=request.decision,
+        decision=_HUMAN_DECISION_API[request.decision],
         reviewer=user.get("sub", "unknown"),
-        reason=request.reason or "",
-        created_at=datetime.now(timezone.utc),
+        rationale=request.reason or "",
     )
     db.add(review)
 
-    from sqlalchemy import update
     await db.execute(
         update(GraphExecution)
         .where(GraphExecution.scan_id == scan_id)
-        .values(status="resuming")
+        .values(status=GraphStatusEnum.running)
     )
     await db.commit()
 
-    # Resume graph
     try:
         await resume_graph(
             thread_id=scan_id,
@@ -463,7 +278,7 @@ async def submit_human_review(
         )
     except Exception as exc:
         log.error("admin.resume_error", scan_id=scan_id, error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Failed to resume graph: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to resume graph: {exc}") from exc
 
     return {"status": "resumed", "scan_id": scan_id, "decision": request.decision}
 
@@ -478,14 +293,20 @@ async def get_pr_findings(
     severity: str | None = Query(None),
     limit: int = Query(100, le=500),
     offset: int = Query(0),
-):
+) -> list[FindingResponse]:
     """Get findings for a specific PR."""
-    from aegis.db.models import Finding
-    from sqlalchemy import select
+    try:
+        pr_pk = int(pr_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid pr id") from exc
 
-    stmt = select(Finding).where(Finding.pr_id == uuid.UUID(pr_id))
+    stmt = select(Finding).where(Finding.pr_id == pr_pk)
     if severity:
-        stmt = stmt.where(Finding.severity == severity)
+        try:
+            sev = SeverityEnum(severity.lower())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid severity") from exc
+        stmt = stmt.where(Finding.severity == sev)
     stmt = stmt.order_by(Finding.severity.desc()).offset(offset).limit(limit)
 
     result = await db.execute(stmt)
@@ -496,10 +317,10 @@ async def get_pr_findings(
             id=str(f.id),
             file_path=f.file_path,
             line_number=f.line_number,
-            vuln_type=f.vuln_type,
-            severity=f.severity,
+            vuln_type=f.vuln_type or "",
+            severity=f.severity.value if hasattr(f.severity, "value") else str(f.severity),
             cwe=f.cwe,
-            description=f.description,
+            description=f.description or "",
             source=f.source or "unknown",
         )
         for f in findings
@@ -514,17 +335,21 @@ async def add_false_positive(
     request: FalsePositiveRequest,
     user: Auth,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> dict:
     """Add a false positive rule for a repository."""
-    from aegis.db.models import FalsePositive
+    try:
+        rid = int(repo_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid repository id") from exc
+
+    pattern = request.pattern
+    if request.reason:
+        pattern = f"{pattern} # {request.reason}"
 
     fp = FalsePositive(
-        id=uuid.uuid4(),
-        repo_id=uuid.UUID(repo_id),
-        pattern=request.pattern,
+        repo_id=rid,
+        pattern=pattern,
         directory=request.directory or "",
-        reason=request.reason or "",
-        created_at=datetime.now(timezone.utc),
     )
     db.add(fp)
     await db.commit()
@@ -537,18 +362,18 @@ async def list_false_positives(
     repo_id: str,
     user: Auth,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> list[dict]:
     """List all false positive rules for a repository."""
-    from aegis.db.models import FalsePositive
-    from sqlalchemy import select
+    try:
+        rid = int(repo_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid repository id") from exc
 
-    result = await db.execute(
-        select(FalsePositive).where(FalsePositive.repo_id == uuid.UUID(repo_id))
-    )
+    result = await db.execute(select(FalsePositive).where(FalsePositive.repo_id == rid))
     fps = result.scalars().all()
 
     return [
-        {"id": str(fp.id), "pattern": fp.pattern, "directory": fp.directory, "reason": fp.reason}
+        {"id": str(fp.id), "pattern": fp.pattern, "directory": fp.directory, "reason": ""}
         for fp in fps
     ]
 
@@ -557,26 +382,28 @@ async def list_false_positives(
 
 @router.get("/kb/search")
 async def search_knowledge_base(
+    user: Auth,
     q: str = Query(..., min_length=3),
     top_k: int = Query(5, le=20),
-    user: Auth = None,
-):
+) -> dict:
     """Semantic search in the knowledge base."""
     from aegis.knowledge.retrieval import search_similar
 
+    _ = user
     results = await search_similar(q, top_k=top_k)
     return {"query": q, "results": results}
 
 
 @router.get("/kb")
 async def list_kb_entries(
+    user: Auth,
     limit: int = Query(50, le=200),
     offset: int = Query(0),
-    user: Auth = None,
-):
+) -> dict:
     """List knowledge base entries."""
     from aegis.knowledge.kb import list_kb_entries as _list
 
+    _ = user
     entries = await _list(limit=limit, offset=offset)
     return {"entries": entries, "count": len(entries)}
 
@@ -589,10 +416,11 @@ async def trigger_retro_scan(
     user: Auth,
     days_back: int = Query(30, le=365),
     limit: int = Query(50, le=200),
-):
+) -> dict:
     """Trigger a retro scan of historical PRs."""
     from aegis.graph.subgraphs.retro_scan import run_retro_scan
 
+    _ = user
     summary = await run_retro_scan(repo_id=repo_id, days_back=days_back, limit=limit)
     return {"status": "initiated", "repo_id": repo_id, **summary}
 
@@ -600,17 +428,17 @@ async def trigger_retro_scan(
 # ── Statistics ────────────────────────────────────────────────────────────────
 
 @router.get("/stats")
-async def get_stats(user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
+async def get_stats(user: Auth, db: Annotated[AsyncSession, Depends(get_db)]) -> dict:
     """Get aggregate scan statistics."""
-    from aegis.db.models import Repository, PullRequest, Finding, GraphExecution
-    from sqlalchemy import select, func
-
+    _ = user
     repo_count = (await db.execute(select(func.count(Repository.id)))).scalar()
     pr_count = (await db.execute(select(func.count(PullRequest.id)))).scalar()
     finding_count = (await db.execute(select(func.count(Finding.id)))).scalar()
     active_scans = (
         await db.execute(
-            select(func.count(GraphExecution.id)).where(GraphExecution.status == "running")
+            select(func.count(GraphExecution.id)).where(
+                GraphExecution.status == GraphStatusEnum.running
+            )
         )
     ).scalar()
 
@@ -620,4 +448,3 @@ async def get_stats(user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
         "total_findings": finding_count,
         "active_scans": active_scans,
     }
->>>>>>> Stashed changes

@@ -31,9 +31,8 @@ async def get_embeddings(texts: list[str]) -> list[list[float]]:
     from aegis.config import get_settings
     settings = get_settings()
 
-    openai_key = settings.openai_api_key or (
-        settings.openrouter_api_key if settings.openrouter_api_key else None
-    )
+    # OpenRouter keys are not valid on api.openai.com — use local embeddings unless OPENAI_API_KEY is set.
+    openai_key = settings.openai_api_key or None
 
     if openai_key:
         return await _get_openai_embeddings(texts, openai_key, settings)
