@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from langgraph.graph import StateGraph, END
 
+from aegis.config import settings
 from aegis.graph.state import SecurityGraphState
 from aegis.graph.routers import (
     route_after_deterministic,
@@ -105,4 +106,9 @@ def build_security_graph(checkpointer=None):
     builder.add_edge("publish", "persist")
     builder.add_edge("persist", END)
 
-    return builder.compile(checkpointer=checkpointer, interrupt_before=["human_review"])
+    # Static interrupt_before causes ainvoke to stop until resume_graph() — without resume,
+    # scans stay "running" forever. Opt-in via ENABLE_GRAPH_INTERRUPT_HUMAN_REVIEW.
+    interrupt_before = (
+        ["human_review"] if settings.enable_graph_interrupt_human_review else []
+    )
+    return builder.compile(checkpointer=checkpointer, interrupt_before=interrupt_before)

@@ -42,6 +42,18 @@ async def execute_graph(initial_state: dict[str, Any]) -> dict[str, Any]:
             graph.ainvoke(initial_state, config=config),
             timeout=settings.max_graph_execution_seconds,
         )
+        # LangGraph static/dynamic interrupt: execution pauses and surfaces __interrupt__
+        if isinstance(result, dict) and result.get("__interrupt__"):
+            log.info(
+                "graph.execute.interrupted",
+                scan_id=scan_id,
+                interrupt=repr(result.get("__interrupt__"))[:500],
+            )
+            out = {k: v for k, v in result.items() if k != "__interrupt__"}
+            out.setdefault("human_review_pending", True)
+            out["status"] = "interrupted"
+            return out
+
         log.info(
             "graph.execute.done",
             scan_id=scan_id,
@@ -72,6 +84,13 @@ async def resume_graph(scan_id: str, update: dict[str, Any]) -> dict[str, Any]:
             graph.ainvoke(update, config=config),
             timeout=settings.max_graph_execution_seconds,
         )
+        if isinstance(result, dict) and result.get("__interrupt__"):
+            out = {k: v for k, v in result.items() if k != "__interrupt__"}
+            out.setdefault("human_review_pending", True)
+            out["status"] = "interrupted"
+            log.info("graph.resume.interrupted", scan_id=scan_id)
+            return out
+
         log.info("graph.resume.done", scan_id=scan_id, status=result.get("status"))
         return result
     except Exception as exc:

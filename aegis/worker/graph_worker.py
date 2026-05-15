@@ -164,6 +164,19 @@ async def run_graph_scan(
             await _update_scan_status(scan_id, "failed", error=error_msg)
             return {"scan_id": scan_id, "status": "failed", "error": error_msg}
 
+        if result.get("status") == "interrupted":
+            log.info(
+                "worker.graph_interrupted",
+                scan_id=scan_id,
+                pending_human=result.get("human_review_pending"),
+            )
+            await _update_scan_status(scan_id, "interrupted")
+            return {
+                "scan_id": scan_id,
+                "status": "interrupted",
+                "human_review_pending": result.get("human_review_pending", True),
+            }
+
         final_risk = result.get("risk_label", "green")
         finding_count = len(result.get("final_findings", []))
 
@@ -271,6 +284,8 @@ async def _update_scan_status(scan_id: str, status: str, error: str | None = Non
             mapped = GraphStatusEnum.failed
         elif status == "running":
             mapped = GraphStatusEnum.running
+        elif status == "interrupted":
+            mapped = GraphStatusEnum.interrupted
         else:
             mapped = GraphStatusEnum.failed
 
@@ -286,7 +301,11 @@ async def _update_scan_status(scan_id: str, status: str, error: str | None = Non
 
                 now = datetime.now(timezone.utc)
                 row.status = mapped
-                if mapped in (GraphStatusEnum.completed, GraphStatusEnum.failed):
+                if mapped in (
+                    GraphStatusEnum.completed,
+                    GraphStatusEnum.failed,
+                    GraphStatusEnum.interrupted,
+                ):
                     row.finished_at = now
                 if error is not None and mapped == GraphStatusEnum.failed:
                     meta = dict(row.metadata_json or {})

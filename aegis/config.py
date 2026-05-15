@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     max_retro_files: int = 500
     max_graph_execution_seconds: int = 900  # 15 min
 
+    # When True, LangGraph pauses before ``human_review`` until ``resume_graph`` is called.
+    # Default False so webhook-driven scans always finish (human_review node still runs for logging).
+    enable_graph_interrupt_human_review: bool = False
+
     # ── Embeddings ───────────────────────────────────────────────────────────
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
