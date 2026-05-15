@@ -49,6 +49,10 @@ async def receive(provider: str, request: Request) -> JSONResponse:
         return JSONResponse({"error": "unknown provider"}, status_code=404)
 
     cfg = get_config().service
+    content_type = request.headers.get("content-type", "")
+    if "application/json" not in content_type.lower():
+        return JSONResponse({"error": "unsupported content type"}, status_code=415)
+
     raw = await request.body()
     if len(raw) > cfg.max_webhook_body_bytes:
         return JSONResponse({"error": "payload too large"}, status_code=413)
