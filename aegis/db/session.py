@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import (
@@ -32,8 +33,13 @@ def _create_engine() -> AsyncEngine:
 
 
 async def init_db() -> None:
-    """Create engine and verify connection."""
+    """Run migrations, create engine, and verify connection."""
     global _engine, _session_factory
+
+    from aegis.db.migrate import run_migrations
+
+    await asyncio.to_thread(run_migrations)
+
     _engine = _create_engine()
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
     # Verify connectivity

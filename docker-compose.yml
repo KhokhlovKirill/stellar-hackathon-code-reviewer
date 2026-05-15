@@ -46,6 +46,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     volumes:
       - ./:/app
     healthcheck:
@@ -68,6 +70,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     volumes:
       - ./:/app
 
