@@ -1,0 +1,31 @@
+# secrets / env
+.env
+*.env
+!.env.example
+*.pem
+*.key
+id_rsa*
+*.p12
+aegis_vault.key
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# data / artifacts
+eval/results/*.json
+!eval/results/.gitkeep
+eval/golden/*.jsonl
+*.sqlite3
+*.db
+.coverage
+htmlcov/
+
+# os
+.DS_Store

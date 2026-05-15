@@ -1,0 +1,86 @@
+# Aegis declarative config (non-secret). Copy to config.yaml.
+# Secrets come from env / vault, never here. Per-repo policy overrides this in DB.
+
+service:
+  ack_timeout_ms: 1000
+  max_webhook_body_bytes: 5242880        # 5 MiB
+  idempotency_ttl_seconds: 86400
+
+queue:
+  per_repo_concurrency: 1                 # serialize scans per repo, cancel stale head_sha
+  max_retries: 5
+  retry_backoff_base_seconds: 2
+
+diff:
+  context_lines: 3                        # narrow context around changed lines
+  max_files: 300
+  max_total_added_lines: 20000
+  per_scan_token_budget: 120000
+  per_scan_cost_usd_cap: 0.50
+
+filter:
+  # files that never go to analysis (criterion C6)
+  ignore_globs:
+    - "**/*.md"
+    - "**/.gitignore"
+    - "**/LICENSE*"
+    - "**/*.png"
+    - "**/*.jpg"
+    - "**/*.jpeg"
+    - "**/*.gif"
+    - "**/*.svg"
+    - "**/*.ico"
+    - "**/*.pdf"
+    - "**/*.lock"
+    - "**/*.min.js"
+    - "**/*.min.css"
+    - "**/node_modules/**"
+    - "**/vendor/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/__snapshots__/**"
+  # lockfiles still parsed by SCA (not as code), listed for clarity
+  sca_manifests:
+    - "**/requirements*.txt"
+    - "**/pyproject.toml"
+    - "**/poetry.lock"
+    - "**/package.json"
+    - "**/package-lock.json"
+    - "**/yarn.lock"
+    - "**/go.mod"
+    - "**/go.sum"
+    - "**/pom.xml"
+    - "**/build.gradle*"
+  max_file_bytes: 1048576
+
+deterministic:
+  semgrep_configs:
+    - "p/owasp-top-ten"
+    - "p/security-audit"
+    - "p/secrets"
+    - "p/cwe-top-25"
+  secrets_min_entropy: 4.0
+  sca_sources:                            # outbound allowlist (see docs/10)
+    - "https://api.osv.dev"
+    - "https://api.github.com/advisories"
+    - "https://api.deps.dev"
+
+llm:
+  ensemble_profile: "det+don+judge"       # det+cloud | det+cloud+don | det+don+judge
+  detector_a: "local-secure"              # SFT+ORPO Qwen3-Coder-30B-A3B security model
+  detector_b: "cloud-generalist"
+  judge: "cloud-judge"
+  request_timeout_seconds: 120
+  tier_health_ttl_seconds: 30
+  fewshot_dir: "eval/fewshot"
+
+policy:
+  severity_comment_gate: "medium"         # post inline for >= this; lower -> summary only
+  merge_block: "critical"                 # off | critical | high
+  comment_language: "ru"                  # ru | en
+  dialog_max_turns: 8
+
+observability:
+  prometheus_enabled: true
+  otel_enabled: false
+  otel_endpoint: ""

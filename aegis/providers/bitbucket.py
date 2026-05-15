@@ -1,0 +1,121 @@
+"""Bitbucket Cloud provider — webhook parse + diff fetch (Phase 1). Write ops: Phase 6.
+
+Auth: workspace access token / app password as Bearer. The /diff endpoint returns a
+raw unified diff (changed-only), reused via the shared parser.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from aegis.errors import ProviderError, WebhookPayloadError
+from aegis.providers.base import HttpMixin
+from aegis.providers.diffparse import parse_unified_diff
+from aegis.schemas import (
+    DiscussionThread,
+    EventKind,
+    FileChange,
+    MergePolicyDecision,
+    Provider,
+    PullRequest,
+    ReviewComment,
+    WebhookEvent,
+)
+
+
+class BitbucketProvider(HttpMixin):
+    provider = Provider.BITBUCKET
+    base_url = "https://api.bitbucket.org/2.0"
+
+    def parse_event(self, headers: dict[str, str], payload: dict[str, Any]) -> WebhookEvent:
+        key = headers.get("x-event-key", "")
+        delivery = headers.get("x-request-id", "") or headers.get("x-hook-uuid", "")
+        repo = payload.get("repository", {})
+        slug = repo.get("full_name", "")
+        repo_id = str(repo.get("uuid", "") or slug)
+        pr = payload.get("pullrequest", {})
+
+        if key in ("pullrequest:created",):
+            kind = EventKind.PR_OPENED
+        elif key in ("pullrequest:updated",):
+            kind = EventKind.PR_UPDATED
+        elif key in ("pullrequest:comment_created",):
+            comment = payload.get("comment", {})
+            return WebhookEvent(
+                provider=self.provider, kind=EventKind.COMMENT, delivery_id=delivery,
+                repo_slug=slug, repo_external_id=repo_id,
+                pr_id=str(pr.get("id", "")), pr_number=pr.get("id"),
+                actor=payload.get("actor", {}).get("nickname", ""),
+                comment_id=str(comment.get("id", "")),
+                comment_body=comment.get("content", {}).get("raw", ""),
+                in_reply_to_id=str((comment.get("parent") or {}).get("id", "") or ""),
+                thread_id=str((comment.get("parent") or {}).get("id") or comment.get("id", "")),
+            )
+        else:
+            raise WebhookPayloadError(f"unhandled bitbucket event '{key}'")
+
+        src = pr.get("source", {})
+        dst = pr.get("destination", {})
+        return WebhookEvent(
+            provider=self.provider, kind=kind, delivery_id=delivery,
+            repo_slug=slug, repo_external_id=repo_id,
+            pr_id=str(pr.get("id", "")), pr_number=pr.get("id"),
+            base_sha=dst.get("commit", {}).get("hash"),
+            head_sha=src.get("commit", {}).get("hash"),
+            title=pr.get("title", ""),
+            actor=payload.get("actor", {}).get("nickname", ""),
+        )
+
+    async def fetch_pull_request(self, ev: WebhookEvent, token: str) -> PullRequest:
+        r = await self._request(
+            "GET", f"/repositories/{ev.repo_slug}/pullrequests/{ev.pr_id}", token, "get_pr"
+        )
+        if r.status_code != 200:
+            raise ProviderError("bitbucket", "get_pr failed", r.status_code)
+        d = r.json()
+        return PullRequest(
+            provider=self.provider, repo_slug=ev.repo_slug,
+            repo_external_id=ev.repo_external_id, pr_id=ev.pr_id,
+            pr_number=ev.pr_number, title=d.get("title", ""),
+            base_sha=d.get("destination", {}).get("commit", {}).get("hash", ""),
+            head_sha=d.get("source", {}).get("commit", {}).get("hash", ""),
+            base_ref=d.get("destination", {}).get("branch", {}).get("name", ""),
+            head_ref=d.get("source", {}).get("branch", {}).get("name", ""),
+            author=d.get("author", {}).get("nickname", ""),
+        )
+
+    async def fetch_diff(self, pr: PullRequest, token: str) -> list[FileChange]:
+        r = await self._request(
+            "GET", f"/repositories/{pr.repo_slug}/pullrequests/{pr.pr_id}/diff",
+            token, "get_diff",
+        )
+        if r.status_code != 200:
+            raise ProviderError("bitbucket", "get_diff failed", r.status_code)
+        return parse_unified_diff(r.text)
+
+    async def fetch_file(self, pr: PullRequest, token: str, path: str) -> str | None:
+        r = await self._request(
+            "GET", f"/repositories/{pr.repo_slug}/src/{pr.head_sha}/{path}",
+            token, "get_file",
+        )
+        return r.text if r.status_code == 200 else None
+
+    async def post_inline_comment(self, pr: PullRequest, token: str, c: ReviewComment) -> str:
+        raise NotImplementedError("bitbucket.post_inline_comment — Phase 6")
+
+    async def post_summary(self, pr: PullRequest, token: str, body: str) -> str:
+        raise NotImplementedError("bitbucket.post_summary — Phase 6")
+
+    async def reply_in_thread(self, pr: PullRequest, token: str, thread_id: str, body: str) -> str:
+        raise NotImplementedError("bitbucket.reply_in_thread — Phase 7")
+
+    async def set_status_check(
+        self, pr: PullRequest, token: str, decision: MergePolicyDecision, url: str
+    ) -> None:
+        raise NotImplementedError("bitbucket.set_status_check — Phase 6")
+
+    async def request_changes(self, pr: PullRequest, token: str, body: str) -> None:
+        raise NotImplementedError("bitbucket.request_changes — Phase 6")
+
+    async def get_thread(self, pr: PullRequest, token: str, thread_id: str) -> DiscussionThread:
+        raise NotImplementedError("bitbucket.get_thread — Phase 7")
