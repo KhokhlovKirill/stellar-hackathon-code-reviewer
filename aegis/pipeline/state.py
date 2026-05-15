@@ -23,4 +23,7 @@ class PipelineState:
     code_files: list[FileChange] = field(default_factory=list)      # kept for analysis
     manifest_files: list[FileChange] = field(default_factory=list)   # dependency manifests
     findings: list[Finding] = field(default_factory=list)            # accumulates
+    risk_score: int = 0
+    risk_label: str = "low"
+    summary_ref: str | None = None
     posted_refs: list[str] = field(default_factory=list)             # VCS comment ids

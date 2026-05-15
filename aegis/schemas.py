@@ -175,6 +175,8 @@ class ScanResult(BaseModel):
     files_skipped: list[dict[str, str]] = Field(default_factory=list)   # {path, reason}
     findings: list[Finding] = Field(default_factory=list)
     decision: MergePolicyDecision | None = None
+    risk_score: int = Field(default=0, ge=0, le=100)
+    risk_label: str = "low"
     degraded: list[str] = Field(default_factory=list)         # e.g. ["local-secure", "judge"]
     est_sent_tokens: int = 0
     est_full_repo_tokens: int = 0

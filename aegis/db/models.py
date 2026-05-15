@@ -89,6 +89,9 @@ class Scan(Base):
     files_skipped: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
     est_sent_tokens: Mapped[int] = mapped_column(Integer, default=0)
     est_full_repo_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    risk_score: Mapped[int] = mapped_column(Integer, default=0)
+    risk_label: Mapped[str] = mapped_column(String(16), default="low")
+    decision: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

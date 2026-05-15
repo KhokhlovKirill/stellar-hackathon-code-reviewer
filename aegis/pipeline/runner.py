@@ -53,6 +53,9 @@ async def _finish(scan_id: str, result: ScanResult, status: str) -> None:
                 files_skipped=result.files_skipped,
                 est_sent_tokens=result.est_sent_tokens,
                 est_full_repo_tokens=result.est_full_repo_tokens,
+                risk_score=result.risk_score,
+                risk_label=result.risk_label,
+                decision=result.decision.model_dump() if result.decision else {},
                 finished_at=result.finished_at,
             )
         )
@@ -162,6 +165,7 @@ async def _run_optional_stages(state) -> None:  # type: ignore[no-untyped-def]
         ("filter", "aegis.pipeline.filter", "apply_filter"),
         ("deterministic", "aegis.pipeline.deterministic_stage", "run_deterministic"),
         ("llm", "aegis.pipeline.llm_stage", "run_llm_analysis"),
+        ("risk_score", "aegis.pipeline.risk_score", "compute_risk_score"),
         ("render", "aegis.pipeline.render", "render_and_post"),
         ("policy", "aegis.pipeline.policy", "apply_merge_policy"),
     ]
