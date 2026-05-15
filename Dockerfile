@@ -20,11 +20,14 @@ RUN curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gi
 
 WORKDIR /app
 
-# Copy dependency files
+# Copy dependency manifest and package skeleton (editable install needs sources)
 COPY pyproject.toml .
+COPY aegis/ aegis/
+COPY main.py .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN pip install --no-cache-dir setuptools wheel \
+    && pip install --no-cache-dir -e ".[dev]"
 
 # Copy application code
 COPY . .
