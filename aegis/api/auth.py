@@ -15,7 +15,7 @@ from aegis.observability.logging import get_logger
 
 log = get_logger(__name__)
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+router = APIRouter(tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
 
 _ALGORITHM = "HS256"

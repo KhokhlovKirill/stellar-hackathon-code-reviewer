@@ -70,9 +70,10 @@ def create_app() -> FastAPI:
     from aegis.api.admin import router as admin_router
     from aegis.api.auth import router as auth_router
 
-    app.include_router(webhooks_router, prefix="/webhooks", tags=["webhooks"])
-    app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
-    app.include_router(admin_router, prefix="/api", tags=["api"])
+    # Each router sets its path prefix once (avoid /api/api/... duplication).
+    app.include_router(webhooks_router)
+    app.include_router(auth_router, prefix="/api/auth")
+    app.include_router(admin_router)
 
     # ── Health / metrics ─────────────────────────────────────────────────────
     @app.get("/health", include_in_schema=False)
