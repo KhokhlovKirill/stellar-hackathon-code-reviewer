@@ -97,6 +97,8 @@ async def render_and_post(state: PipelineState) -> None:
     except Exception as exc:
         log.warning("render.summary_failed", scan_id=state.scan_id, error=str(exc))
 
+    await _index_published_findings(state, gate)
+
     log.info(
         "render.posted",
         scan_id=state.scan_id,
@@ -104,6 +106,33 @@ async def render_and_post(state: PipelineState) -> None:
         deduped=skipped,
         summary_ref=state.summary_ref,
     )
+
+
+async def _index_published_findings(state: PipelineState, gate: int) -> None:
+    """Index published (confirmed) findings into the Security KB.
+
+    These survived deterministic + LLM judge + suppression, so they are the
+    repo's confirmed-finding memory for future "similar to PR #N" recall.
+    Best-effort: never raises, never blocks the scan.
+    """
+    try:
+        from aegis.kb.store import index_finding
+    except Exception:
+        return
+    for finding in state.findings:
+        if finding.severity.rank < gate:
+            continue
+        try:
+            await index_finding(
+                repo_slug=state.pr.repo_slug,
+                provider=state.ev.provider.value,
+                pr_id=state.pr.pr_id,
+                scan_id=state.scan_id,
+                finding=finding,
+                snippet=state.context_map.get(finding.file, ""),
+            )
+        except Exception as exc:
+            log.warning("render.kb_index_failed", scan_id=state.scan_id, error=str(exc))
 
 
 def render_inline_comment(finding: Finding) -> str:
@@ -158,6 +187,15 @@ def render_summary(state: PipelineState) -> str:
 
     if state.blast_radius_mermaid:
         lines.extend(["", "**Blast Radius**", "```mermaid", state.blast_radius_mermaid, "```"])
+
+    if state.kb_matches:
+        lines.extend(["", "**Recurring patterns (Security KB)**"])
+        for fp, hits in list(state.kb_matches.items())[:10]:
+            top = hits[0]
+            lines.append(
+                f"- `{fp[:8]}` similar to confirmed {top['cwe']} in "
+                f"PR #{top['pr_id']} (sim {top['similarity']})"
+            )
 
     if state.result.degraded:
         lines.extend(["", "**Degraded components**"])

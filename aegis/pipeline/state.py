@@ -28,5 +28,6 @@ class PipelineState:
     risk_score: int = 0
     risk_label: str = "low"
     blast_radius_mermaid: str | None = None
+    kb_matches: dict[str, list[dict[str, str]]] = field(default_factory=dict)  # fp -> hits
     summary_ref: str | None = None
     posted_refs: list[str] = field(default_factory=list)             # VCS comment ids

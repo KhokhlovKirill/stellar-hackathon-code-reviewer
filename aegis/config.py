@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     lmstudio_base_model: str = Field(
         "qwen3.6-35b-a3b-ud-mlx", alias="LMSTUDIO_BASE_MODEL"
     )
+    lmstudio_embed_model: str = Field(
+        "text-embedding-nomic-embed-text-v1.5", alias="LMSTUDIO_EMBED_MODEL"
+    )
 
     @field_validator("vault_key")
     @classmethod
@@ -115,6 +118,14 @@ class LLMCfg(BaseModel):
     fewshot_dir: str = "eval/fewshot"
 
 
+class KbCfg(BaseModel):
+    enabled: bool = True
+    top_k: int = 3
+    min_similarity: float = 0.78        # cosine; below this → not "similar"
+    candidate_limit: int = 500          # most-recent entries scanned per repo
+    embed_timeout_seconds: int = 20
+
+
 class PolicyCfg(BaseModel):
     severity_comment_gate: Literal["info", "low", "medium", "high", "critical"] = "medium"
     merge_block: Literal["off", "critical", "high"] = "critical"
@@ -135,6 +146,7 @@ class AppConfig(BaseModel):
     filter: FilterCfg = Field(default_factory=FilterCfg)
     deterministic: DeterministicCfg = Field(default_factory=DeterministicCfg)
     llm: LLMCfg = Field(default_factory=LLMCfg)
+    kb: KbCfg = Field(default_factory=KbCfg)
     policy: PolicyCfg = Field(default_factory=PolicyCfg)
     observability: ObservabilityCfg = Field(default_factory=ObservabilityCfg)
 

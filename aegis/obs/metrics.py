@@ -52,6 +52,12 @@ class _Metrics:
         self.fp_feedback_total = Counter(
             "aegis_fp_feedback_total", "Author feedback on bot comments", ["kind"], registry=r
         )
+        self.kb_indexed_total = Counter(
+            "aegis_kb_indexed_total", "Confirmed findings indexed into the KB", registry=r
+        )
+        self.kb_hits_total = Counter(
+            "aegis_kb_hits_total", "Findings with a similar prior KB match", registry=r
+        )
         self.queue_depth = Gauge("aegis_queue_depth", "Pending scan jobs", registry=r)
         self.dialog_turns_total = Counter(
             "aegis_dialog_turns_total", "Dialog turns answered", registry=r

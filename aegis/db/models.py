@@ -186,3 +186,33 @@ class AdminAudit(Base):
     before: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     after: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class KnowledgeEntry(Base):
+    """Security Knowledge Base — confirmed findings indexed for similarity recall.
+
+    Powers "this is similar to a finding in PR #142". The embedding is stored as a
+    JSON float array (portable across Postgres/SQLite); similarity is cosine over a
+    repo-scoped, recency-bounded candidate set. For very large installs the embedding
+    column can be migrated to a native pgvector index without changing the query API.
+    """
+
+    __tablename__ = "knowledge_entries"
+    __table_args__ = (
+        UniqueConstraint("repo_slug", "fingerprint", name="uq_kb_repo_fingerprint"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repo_slug: Mapped[str] = mapped_column(String(255), index=True)
+    provider: Mapped[str] = mapped_column(String(16))
+    pr_id: Mapped[str] = mapped_column(String(64))
+    scan_id: Mapped[str] = mapped_column(String(64), index=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    cwe: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    severity: Mapped[str] = mapped_column(String(16))
+    file: Mapped[str] = mapped_column(String(512))
+    title: Mapped[str] = mapped_column(Text)
+    snippet: Mapped[str] = mapped_column(Text, default="")
+    embedding: Mapped[list[float]] = mapped_column(JSON, default=list)
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
