@@ -449,7 +449,7 @@ async def _handle_chatops_command(message: str, context: dict):
 
         if repo_full_name and pr_number:
             from aegis.providers import get_provider
-            provider = get_provider(provider_name, context.get("access_token", ""))
+            provider = get_provider(provider_name, context.get("access_token", ""), repo_full_name)
             await provider.post_comment(repo=repo_full_name, pr_number=pr_number, body=response)
 
     except Exception as exc:

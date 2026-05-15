@@ -5,13 +5,22 @@ from aegis.providers.github import GitHubProvider
 from aegis.providers.gitlab import GitLabProvider
 
 
-def get_provider(provider: str, token: str, repo_slug: str) -> BaseProvider:
+def get_provider(
+    provider: str,
+    token: str,
+    repo_slug: str,
+    *,
+    gitlab_api_base_url: str | None = None,
+) -> BaseProvider:
     """Factory function — returns the correct provider implementation."""
     match provider.lower():
         case "github":
             return GitHubProvider(token=token, repo_slug=repo_slug)
         case "gitlab":
-            return GitLabProvider(token=token, repo_slug=repo_slug)
+            from aegis.config import get_settings
+
+            base = gitlab_api_base_url or get_settings().gitlab_api_base_url
+            return GitLabProvider(token=token, repo_slug=repo_slug, base_url=base)
         case _:
             raise ValueError(f"Unsupported provider: {provider}")
 

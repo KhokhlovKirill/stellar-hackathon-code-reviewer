@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""
     gitlab_webhook_secret: str = ""
 
+    # ── GitLab (worker / publish / chatops) ───────────────────────────────────
+    # REST API v4 base URL; override via GITLAB_API_BASE_URL for gitlab.com or other hosts.
+    gitlab_api_base_url: str = "https://git.khokhlovkirill.ru/api/v4"
+
     # ── LangSmith ────────────────────────────────────────────────────────────
     langchain_tracing_v2: bool = False
     langchain_api_key: str = ""

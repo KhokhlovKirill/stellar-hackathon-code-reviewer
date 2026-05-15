@@ -36,7 +36,7 @@ async def publish_agent(state: SecurityGraphState) -> SecurityGraphState:
         return {**state, "published": False, "publish_error": "Missing credentials"}
 
     try:
-        provider = get_provider(provider_name, access_token)
+        provider = get_provider(provider_name, access_token, repo_full_name)
 
         comment_ids: list[str] = []
 

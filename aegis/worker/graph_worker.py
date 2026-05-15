@@ -199,7 +199,7 @@ async def _fetch_pr_data(
     from aegis.db.models import Repository
     from sqlalchemy import select
 
-    vcs = get_provider(provider, access_token)
+    vcs = get_provider(provider, access_token, repo_full_name)
 
     # Fetch diff files
     diff_files = await vcs.get_pr_files(repo=repo_full_name, pr_number=pr_number)

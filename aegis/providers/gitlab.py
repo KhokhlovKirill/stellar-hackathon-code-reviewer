@@ -14,7 +14,8 @@ from aegis.providers.base import BaseProvider, DiffFile, PRMetadata
 
 log = get_logger(__name__)
 
-_BASE = "https://gitlab.com/api/v4"
+# Default API root if GitLabProvider is constructed without base_url (factory uses Settings).
+_BASE = "https://git.khokhlovkirill.ru/api/v4"
 
 _SKIP_EXTENSIONS = {
     ".md", ".markdown", ".rst", ".txt", ".log",
