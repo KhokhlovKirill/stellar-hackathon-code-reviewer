@@ -98,6 +98,36 @@ class Repository(Base):
 
     __table_args__ = (UniqueConstraint("provider", "slug", name="uq_repo_provider_slug"),)
 
+    # API / webhook aliases (slug is org/repo or group/project path)
+    @property
+    def full_name(self) -> str:
+        return self.slug
+
+    @property
+    def access_token(self) -> str | None:
+        return self.token_encrypted
+
+    @property
+    def webhook_secret(self) -> str | None:
+        return self.webhook_secret_encrypted
+
+    @property
+    def active(self) -> bool:
+        return self.is_active
+
+
+def repository_url(provider: str, slug: str) -> str:
+    """Canonical repo URL for provider + slug (e.g. hackathon4/chocolate)."""
+    match provider:
+        case "github":
+            return f"https://github.com/{slug}"
+        case "gitlab":
+            return f"https://gitlab.com/{slug}"
+        case "bitbucket":
+            return f"https://bitbucket.org/{slug}"
+        case _:
+            return slug
+
 
 class PullRequest(Base):
     """Record of an analysed Pull/Merge Request."""

@@ -298,10 +298,17 @@ async def github_comment_webhook(
 
 async def _get_repo(db: AsyncSession, provider: str, full_name: str):
     from sqlalchemy import select
+    from aegis.db.models import ProviderEnum
+
+    try:
+        provider_enum = ProviderEnum(provider)
+    except ValueError:
+        return None
+
     result = await db.execute(
         select(Repository).where(
-            Repository.provider == provider,
-            Repository.full_name == full_name,
+            Repository.provider == provider_enum,
+            Repository.slug == full_name,
         )
     )
     return result.scalar_one_or_none()

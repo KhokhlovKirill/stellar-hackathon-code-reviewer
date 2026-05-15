@@ -76,10 +76,15 @@ class FalsePositiveRequest(BaseModel):
 @router.post("/repos", response_model=RepoResponse)
 async def register_repo(request: RegisterRepoRequest, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
     """Register a repository for security scanning."""
-    from aegis.db.models import Repository
+    from aegis.db.models import ProviderEnum, Repository, repository_url
     from sqlalchemy import select
     from cryptography.fernet import Fernet
     from aegis.config import get_settings
+
+    try:
+        provider = ProviderEnum(request.provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {request.provider}") from exc
 
     settings = get_settings()
     f = Fernet(settings.fernet_key.encode())
@@ -91,22 +96,21 @@ async def register_repo(request: RegisterRepoRequest, user: Auth, db: Annotated[
     # Check if already registered
     existing = await db.execute(
         select(Repository).where(
-            Repository.provider == request.provider,
-            Repository.full_name == request.full_name,
+            Repository.provider == provider,
+            Repository.slug == request.full_name,
         )
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Repository already registered")
 
     repo = Repository(
-        id=uuid.uuid4(),
-        provider=request.provider,
-        full_name=request.full_name,
-        access_token=encrypted_token,
-        webhook_secret=encrypted_secret,
+        provider=provider,
+        slug=request.full_name,
+        url=repository_url(request.provider, request.full_name),
+        token_encrypted=encrypted_token,
+        webhook_secret_encrypted=encrypted_secret,
         settings_json=request.settings,
-        active=True,
-        created_at=datetime.now(timezone.utc),
+        is_active=True,
     )
     db.add(repo)
     await db.commit()
@@ -148,7 +152,12 @@ async def delete_repo(repo_id: str, user: Auth, db: Annotated[AsyncSession, Depe
     from aegis.db.models import Repository
     from sqlalchemy import select
 
-    result = await db.execute(select(Repository).where(Repository.id == uuid.UUID(repo_id)))
+    try:
+        repo_pk = int(repo_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid repository id") from exc
+
+    result = await db.execute(select(Repository).where(Repository.id == repo_pk))
     repo = result.scalar_one_or_none()
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")

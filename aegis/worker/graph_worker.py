@@ -210,12 +210,24 @@ async def _fetch_pr_data(
     try:
         session_factory = get_session_factory()
         async with session_factory() as session:
-            result = await session.execute(
-                select(Repository).where(
-                    Repository.full_name == repo_full_name,
-                    Repository.provider == provider,
+            from aegis.db.models import ProviderEnum
+
+            try:
+                provider_enum = ProviderEnum(provider)
+            except ValueError:
+                provider_enum = None
+
+            if provider_enum is not None:
+                result = await session.execute(
+                    select(Repository).where(
+                        Repository.slug == repo_full_name,
+                        Repository.provider == provider_enum,
+                    )
                 )
-            )
+            else:
+                result = await session.execute(
+                    select(Repository).where(Repository.slug == repo_full_name)
+                )
             repo = result.scalar_one_or_none()
             if repo and repo.settings_json:
                 repo_settings = repo.settings_json
