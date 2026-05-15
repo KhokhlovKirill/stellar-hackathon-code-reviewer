@@ -120,21 +120,101 @@ class GitHubProvider(HttpMixin):
 
     # ---- Phase 6 write ops ----
     async def post_inline_comment(self, pr: PullRequest, token: str, c: ReviewComment) -> str:
-        raise NotImplementedError("github.post_inline_comment — Phase 6")
+        payload: dict[str, object] = {
+            "body": c.body,
+            "commit_id": pr.head_sha,
+            "path": c.file,
+        }
+        if c.diff_position is not None:
+            # Legacy GitHub API position is still the most reliable mapping when
+            # we already parsed it from the unified diff.
+            payload["position"] = c.diff_position
+        else:
+            payload["line"] = c.line
+            payload["side"] = "RIGHT"
+        r = await self._request(
+            "POST",
+            f"/repos/{pr.repo_slug}/pulls/{pr.pr_id}/comments",
+            token,
+            "post_inline_comment",
+            json=payload,
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("github", "post_inline_comment failed", r.status_code)
+        return str(r.json().get("id", ""))
 
     async def post_summary(self, pr: PullRequest, token: str, body: str) -> str:
-        raise NotImplementedError("github.post_summary — Phase 6")
+        r = await self._request(
+            "POST",
+            f"/repos/{pr.repo_slug}/issues/{pr.pr_id}/comments",
+            token,
+            "post_summary",
+            json={"body": body},
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("github", "post_summary failed", r.status_code)
+        return str(r.json().get("id", ""))
 
     async def reply_in_thread(self, pr: PullRequest, token: str, thread_id: str, body: str) -> str:
-        raise NotImplementedError("github.reply_in_thread — Phase 7")
+        r = await self._request(
+            "POST",
+            f"/repos/{pr.repo_slug}/pulls/{pr.pr_id}/comments/{thread_id}/replies",
+            token,
+            "reply_in_thread",
+            json={"body": body},
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("github", "reply_in_thread failed", r.status_code)
+        return str(r.json().get("id", ""))
 
     async def set_status_check(
         self, pr: PullRequest, token: str, decision: MergePolicyDecision, url: str
     ) -> None:
-        raise NotImplementedError("github.set_status_check — Phase 6")
+        payload = {
+            "state": decision.state,
+            "target_url": url,
+            "description": decision.reason[:140] or "Aegis security review",
+            "context": decision.context,
+        }
+        r = await self._request(
+            "POST",
+            f"/repos/{pr.repo_slug}/statuses/{pr.head_sha}",
+            token,
+            "set_status_check",
+            json=payload,
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("github", "set_status_check failed", r.status_code)
 
     async def request_changes(self, pr: PullRequest, token: str, body: str) -> None:
-        raise NotImplementedError("github.request_changes — Phase 6")
+        r = await self._request(
+            "POST",
+            f"/repos/{pr.repo_slug}/pulls/{pr.pr_id}/reviews",
+            token,
+            "request_changes",
+            json={"body": body, "event": "REQUEST_CHANGES"},
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("github", "request_changes failed", r.status_code)
 
     async def get_thread(self, pr: PullRequest, token: str, thread_id: str) -> DiscussionThread:
-        raise NotImplementedError("github.get_thread — Phase 7")
+        r = await self._request(
+            "GET",
+            f"/repos/{pr.repo_slug}/pulls/comments/{thread_id}",
+            token,
+            "get_thread",
+        )
+        if r.status_code != 200:
+            raise ProviderError("github", "get_thread failed", r.status_code)
+        d = r.json()
+        return DiscussionThread(
+            thread_id=thread_id,
+            pr_id=pr.pr_id,
+            comments=[
+                {
+                    "id": d.get("id"),
+                    "author": d.get("user", {}).get("login"),
+                    "body": d.get("body", ""),
+                }
+            ],
+        )
