@@ -1,1 +1,0 @@
-"""Aegis admin package."""

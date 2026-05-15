@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from aegis.config import settings
+# Load application models so Alembic can autogenerate migrations
 from aegis.db.models import Base  # noqa: F401
+from aegis.config import settings
 
 config = context.config
 

@@ -93,9 +93,7 @@ class Repository(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    pull_requests: Mapped[list[PullRequest]] = relationship(
-        back_populates="repository", cascade="all, delete-orphan"
-    )
+    pull_requests: Mapped[list[PullRequest]] = relationship(back_populates="repository", cascade="all, delete-orphan")
     false_positives: Mapped[list[FalsePositive]] = relationship(back_populates="repository")
 
     __table_args__ = (UniqueConstraint("provider", "slug", name="uq_repo_provider_slug"),)
@@ -131,15 +129,9 @@ class PullRequest(Base):
     )
 
     repository: Mapped[Repository] = relationship(back_populates="pull_requests")
-    findings: Mapped[list[Finding]] = relationship(
-        back_populates="pull_request", cascade="all, delete-orphan"
-    )
-    llm_logs: Mapped[list[LLMLog]] = relationship(
-        back_populates="pull_request", cascade="all, delete-orphan"
-    )
-    dialogs: Mapped[list[Dialog]] = relationship(
-        back_populates="pull_request", cascade="all, delete-orphan"
-    )
+    findings: Mapped[list[Finding]] = relationship(back_populates="pull_request", cascade="all, delete-orphan")
+    llm_logs: Mapped[list[LLMLog]] = relationship(back_populates="pull_request", cascade="all, delete-orphan")
+    dialogs: Mapped[list[Dialog]] = relationship(back_populates="pull_request", cascade="all, delete-orphan")
     graph_executions: Mapped[list[GraphExecution]] = relationship(back_populates="pull_request")
 
     __table_args__ = (
@@ -254,9 +246,7 @@ class GraphExecution(Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
 
     pull_request: Mapped[PullRequest | None] = relationship(back_populates="graph_executions")
-    node_runs: Mapped[list[GraphNodeRun]] = relationship(
-        back_populates="graph_execution", cascade="all, delete-orphan"
-    )
+    node_runs: Mapped[list[GraphNodeRun]] = relationship(back_populates="graph_execution", cascade="all, delete-orphan")
 
 
 class GraphNodeRun(Base):

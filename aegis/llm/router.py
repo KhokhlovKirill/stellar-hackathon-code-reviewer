@@ -7,19 +7,13 @@ from typing import Any
 
 from aegis.config import settings
 from aegis.observability.logging import get_logger
-from aegis.observability.metrics import (
-    llm_errors_total,
-    llm_latency_seconds,
-    llm_requests_total,
-    llm_tokens_used_total,
-)
+from aegis.observability.metrics import llm_errors_total, llm_latency_seconds, llm_requests_total, llm_tokens_used_total
 
 log = get_logger(__name__)
 
 
 def _get_anthropic_client():
     from langchain_anthropic import ChatAnthropic
-
     return ChatAnthropic(
         model=settings.primary_llm_model,
         anthropic_api_key=settings.anthropic_api_key,
@@ -32,7 +26,6 @@ def _get_anthropic_client():
 
 def _get_openrouter_client():
     from langchain_openai import ChatOpenAI
-
     return ChatOpenAI(
         model=settings.fallback_llm_model,
         openai_api_key=settings.openrouter_api_key,
@@ -64,6 +57,7 @@ async def call_llm(
     Returns:
         {content, model, prompt_tokens, completion_tokens, latency_ms}
     """
+    # Sanitize inputs to prevent prompt injection
     system_prompt = _sanitize_prompt(system_prompt)
     user_prompt = _sanitize_prompt(user_prompt)
 
@@ -121,6 +115,7 @@ async def call_llm(
         error_type = type(exc).__name__
         llm_errors_total.labels(model=model_name, error_type=error_type).inc()
 
+        # Automatic fallback if primary failed and we weren't already on fallback
         if not use_fallback and settings.openrouter_api_key:
             log.warning("llm.primary_failed_fallback", error=str(exc), agent=agent_name)
             return await call_llm(
@@ -137,6 +132,7 @@ async def call_llm(
 
 def _sanitize_prompt(text: str) -> str:
     """Basic prompt injection mitigation."""
+    # Remove common injection patterns
     dangerous = [
         "Ignore previous instructions",
         "Disregard all prior",

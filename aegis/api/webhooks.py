@@ -9,12 +9,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
-from sqlalchemy import select, update
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aegis.db.models import GraphExecution, GraphStatusEnum, PRStatusEnum, ProviderEnum, PullRequest, Repository
 from aegis.db.session import get_db
+from aegis.db.models import Repository, PullRequest, GraphExecution
 from aegis.observability.logging import get_logger
 from aegis.observability.metrics import WEBHOOKS_RECEIVED
 
@@ -56,7 +55,6 @@ async def github_webhook(
     x_github_delivery: Annotated[str | None, Header()] = None,
 ):
     """Receive and process GitHub webhook events."""
-    _ = x_github_delivery
     body = await request.body()
     WEBHOOKS_RECEIVED.labels(provider="github", event=x_github_event or "unknown").inc()
 
@@ -64,6 +62,7 @@ async def github_webhook(
         log.debug("github.webhook.ignored", event=x_github_event)
         return {"status": "ignored", "event": x_github_event}
 
+    # Parse payload
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
@@ -73,16 +72,18 @@ async def github_webhook(
     if action not in _GITHUB_PR_EVENTS:
         return {"status": "ignored", "action": action}
 
+    # Find repository
     repo_data = payload.get("repository", {})
     repo_full_name = repo_data.get("full_name", "")
 
-    repo = await _get_repo(db, provider=ProviderEnum.github, slug=repo_full_name)
+    repo = await _get_repo(db, provider="github", full_name=repo_full_name)
     if not repo:
         log.warning("github.webhook.repo_not_found", repo=repo_full_name)
         raise HTTPException(status_code=404, detail=f"Repository {repo_full_name} not registered")
 
-    if repo.webhook_secret_encrypted:
-        secret = _decrypt_secret(repo.webhook_secret_encrypted)
+    # Verify HMAC signature
+    if repo.webhook_secret:
+        secret = _decrypt_secret(repo.webhook_secret)
         if not _verify_github_signature(body, x_hub_signature_256 or "", secret):
             log.warning("github.webhook.invalid_signature", repo=repo_full_name)
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
@@ -92,9 +93,11 @@ async def github_webhook(
     head_sha = pr_data.get("head", {}).get("sha", "")
 
     if action == "closed":
+        # Update PR status
         await _update_pr_status(db, repo.id, pr_number, "closed")
         return {"status": "ok", "action": "closed"}
 
+    # Upsert PR record
     pr = await _upsert_pr(
         db,
         repo_id=repo.id,
@@ -107,15 +110,20 @@ async def github_webhook(
         head_branch=pr_data.get("head", {}).get("ref", ""),
     )
 
+    # Create GraphExecution record
     scan_id = str(uuid.uuid4())
     execution = GraphExecution(
+        id=uuid.uuid4(),
         scan_id=scan_id,
         pr_id=pr.id,
-        status=GraphStatusEnum.running,
+        repo_id=repo.id,
+        status="queued",
+        created_at=datetime.now(timezone.utc),
     )
     db.add(execution)
     await db.commit()
 
+    # Queue the scan via background task
     background_tasks.add_task(
         _enqueue_scan,
         repo_id=str(repo.id),
@@ -123,7 +131,7 @@ async def github_webhook(
         pr_number=pr_number,
         scan_id=scan_id,
         repo_full_name=repo_full_name,
-        access_token=_decrypt_secret(repo.token_encrypted) if repo.token_encrypted else "",
+        access_token=_decrypt_secret(repo.access_token) if repo.access_token else "",
         head_sha=head_sha,
         provider="github",
         pr_metadata={
@@ -174,12 +182,13 @@ async def gitlab_webhook(
     project = payload.get("project", {})
     repo_full_name = project.get("path_with_namespace", "")
 
-    repo = await _get_repo(db, provider=ProviderEnum.gitlab, slug=repo_full_name)
+    repo = await _get_repo(db, provider="gitlab", full_name=repo_full_name)
     if not repo:
         raise HTTPException(status_code=404, detail=f"Repository {repo_full_name} not registered")
 
-    if repo.webhook_secret_encrypted:
-        secret = _decrypt_secret(repo.webhook_secret_encrypted)
+    # Verify token
+    if repo.webhook_secret:
+        secret = _decrypt_secret(repo.webhook_secret)
         if not _verify_gitlab_token(x_gitlab_token or "", secret):
             raise HTTPException(status_code=401, detail="Invalid webhook token")
 
@@ -204,9 +213,12 @@ async def gitlab_webhook(
 
     scan_id = str(uuid.uuid4())
     execution = GraphExecution(
+        id=uuid.uuid4(),
         scan_id=scan_id,
         pr_id=pr.id,
-        status=GraphStatusEnum.running,
+        repo_id=repo.id,
+        status="queued",
+        created_at=datetime.now(timezone.utc),
     )
     db.add(execution)
     await db.commit()
@@ -218,7 +230,7 @@ async def gitlab_webhook(
         pr_number=pr_number,
         scan_id=scan_id,
         repo_full_name=repo_full_name,
-        access_token=_decrypt_secret(repo.token_encrypted) if repo.token_encrypted else "",
+        access_token=_decrypt_secret(repo.access_token) if repo.access_token else "",
         head_sha=head_sha,
         provider="gitlab",
         pr_metadata={
@@ -248,7 +260,6 @@ async def github_comment_webhook(
     x_hub_signature_256: Annotated[str | None, Header()] = None,
 ):
     """Handle GitHub PR comment webhooks for @secbot commands."""
-    _ = x_hub_signature_256
     if x_github_event not in ("issue_comment", "pull_request_review_comment"):
         return {"status": "ignored"}
 
@@ -265,7 +276,7 @@ async def github_comment_webhook(
     pr_number = payload.get("issue", {}).get("number") or payload.get("pull_request", {}).get("number")
     repo_full_name = payload.get("repository", {}).get("full_name", "")
 
-    repo = await _get_repo(db, provider=ProviderEnum.github, slug=repo_full_name)
+    repo = await _get_repo(db, provider="github", full_name=repo_full_name)
     if not repo:
         return {"status": "ignored", "reason": "repo not registered"}
 
@@ -277,8 +288,6 @@ async def github_comment_webhook(
         "pr_number": pr_number,
         "repo_full_name": repo_full_name,
         "user": payload.get("comment", {}).get("user", {}).get("login", ""),
-        "provider": "github",
-        "access_token": _decrypt_secret(repo.token_encrypted) if repo.token_encrypted else "",
     }
 
     background_tasks.add_task(_handle_chatops_command, comment_body, context)
@@ -287,17 +296,19 @@ async def github_comment_webhook(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def _get_repo(db: AsyncSession, provider: ProviderEnum, slug: str) -> Repository | None:
+async def _get_repo(db: AsyncSession, provider: str, full_name: str):
+    from sqlalchemy import select
     result = await db.execute(
         select(Repository).where(
             Repository.provider == provider,
-            Repository.slug == slug,
+            Repository.full_name == full_name,
         )
     )
     return result.scalar_one_or_none()
 
 
-async def _get_pr(db: AsyncSession, repo_id: int, pr_number: int) -> PullRequest | None:
+async def _get_pr(db: AsyncSession, repo_id, pr_number: int):
+    from sqlalchemy import select
     result = await db.execute(
         select(PullRequest).where(
             PullRequest.repo_id == repo_id,
@@ -309,7 +320,7 @@ async def _get_pr(db: AsyncSession, repo_id: int, pr_number: int) -> PullRequest
 
 async def _upsert_pr(
     db: AsyncSession,
-    repo_id: int,
+    repo_id,
     pr_number: int,
     head_sha: str,
     title: str,
@@ -318,6 +329,8 @@ async def _upsert_pr(
     base_branch: str,
     head_branch: str,
 ) -> PullRequest:
+    from sqlalchemy import select, update
+
     result = await db.execute(
         select(PullRequest).where(
             PullRequest.repo_id == repo_id,
@@ -325,51 +338,44 @@ async def _upsert_pr(
         )
     )
     pr = result.scalar_one_or_none()
-    meta = {"head_sha": head_sha, "description": description}
 
-    if pr is not None:
-        existing = dict(pr.analysis_metadata or {})
-        existing.update(meta)
+    if pr:
         await db.execute(
             update(PullRequest)
             .where(PullRequest.id == pr.id)
             .values(
-                pr_title=title,
-                author=author,
-                base_branch=base_branch,
-                head_branch=head_branch,
-                analysis_metadata=existing,
-                status=PRStatusEnum.pending,
+                head_sha=head_sha,
+                status="open",
                 updated_at=datetime.now(timezone.utc),
             )
         )
-        await db.flush()
-        await db.refresh(pr)
-        return pr
+    else:
+        pr = PullRequest(
+            id=uuid.uuid4(),
+            repo_id=repo_id,
+            pr_number=pr_number,
+            head_sha=head_sha,
+            title=title,
+            description=description,
+            author=author,
+            base_branch=base_branch,
+            head_branch=head_branch,
+            status="open",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(pr)
 
-    pr = PullRequest(
-        repo_id=repo_id,
-        pr_number=pr_number,
-        pr_title=title,
-        author=author,
-        base_branch=base_branch,
-        head_branch=head_branch,
-        status=PRStatusEnum.pending,
-        analysis_metadata=meta,
-    )
-    db.add(pr)
     await db.flush()
-    await db.refresh(pr)
     return pr
 
 
-async def _update_pr_status(db: AsyncSession, repo_id: int, pr_number: int, st: str) -> None:
-    """Mark PR status for lifecycle events (e.g. closed)."""
-    mapped = PRStatusEnum.passed if st == "closed" else PRStatusEnum.error
+async def _update_pr_status(db: AsyncSession, repo_id, pr_number: int, status: str):
+    from sqlalchemy import update
     await db.execute(
         update(PullRequest)
         .where(PullRequest.repo_id == repo_id, PullRequest.pr_number == pr_number)
-        .values(status=mapped, updated_at=datetime.now(timezone.utc))
+        .values(status=status, updated_at=datetime.now(timezone.utc))
     )
     await db.commit()
 
@@ -381,12 +387,11 @@ def _decrypt_secret(encrypted: str | None) -> str:
     try:
         from aegis.config import get_settings
         from cryptography.fernet import Fernet
-
         settings = get_settings()
         f = Fernet(settings.fernet_key.encode())
         return f.decrypt(encrypted.encode()).decode()
     except Exception:
-        return encrypted
+        return encrypted  # Return as-is if not encrypted
 
 
 async def _enqueue_scan(
@@ -399,11 +404,10 @@ async def _enqueue_scan(
     head_sha: str,
     provider: str,
     pr_metadata: dict,
-) -> None:
+):
     """Background task to enqueue a graph scan."""
     try:
         from aegis.worker.graph_worker import enqueue_scan
-
         await enqueue_scan(
             repo_id=repo_id,
             pr_id=pr_id,
@@ -419,26 +423,27 @@ async def _enqueue_scan(
         log.error("webhooks.enqueue_error", scan_id=scan_id, error=str(exc))
 
 
-async def _handle_chatops_command(message: str, context: dict) -> None:
+async def _handle_chatops_command(message: str, context: dict):
     """Background task to process a @secbot command."""
     try:
         from aegis.graph.subgraphs.chatops import run_chatops
         from aegis.dialog.memory import append_message
-        from aegis.providers import get_provider
 
-        pr_id = context.get("pr_id") or ""
-        provider_name = str(context.get("provider", "github"))
-        repo_full_name = str(context.get("repo_full_name", ""))
-        pr_number = context.get("pr_number")
-        token = str(context.get("access_token", ""))
+        pr_id = context.get("pr_id", "")
 
         await append_message(pr_id, "user", message, {"user": context.get("user")})
         response = await run_chatops(message, context)
         await append_message(pr_id, "bot", response)
 
-        if repo_full_name and pr_number is not None:
-            prov = get_provider(provider_name, token, repo_full_name)
-            await prov.publish_pr_comment(int(pr_number), response)
+        # Post response back to PR
+        provider_name = context.get("provider", "github")
+        repo_full_name = context.get("repo_full_name", "")
+        pr_number = context.get("pr_number")
+
+        if repo_full_name and pr_number:
+            from aegis.providers import get_provider
+            provider = get_provider(provider_name, context.get("access_token", ""))
+            await provider.post_comment(repo=repo_full_name, pr_number=pr_number, body=response)
 
     except Exception as exc:
         log.error("webhooks.chatops_error", error=str(exc))

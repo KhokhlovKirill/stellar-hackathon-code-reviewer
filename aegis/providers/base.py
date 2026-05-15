@@ -48,6 +48,8 @@ class BaseProvider(ABC):
         self.token = token
         self.repo_slug = repo_slug
 
+    # ── Read operations ───────────────────────────────────────────────────────
+
     @abstractmethod
     async def fetch_pr_metadata(self, pr_number: int) -> PRMetadata:
         """Return normalised PR metadata."""
@@ -63,6 +65,8 @@ class BaseProvider(ABC):
     @abstractmethod
     async def fetch_file_lines(self, path: str, ref: str, start: int, end: int) -> str:
         """Return specific line range of a file for Smart Context Window."""
+
+    # ── Write operations ──────────────────────────────────────────────────────
 
     @abstractmethod
     async def publish_inline_comment(
@@ -107,6 +111,8 @@ class BaseProvider(ABC):
     @abstractmethod
     async def register_webhook(self, target_url: str, secret: str, events: list[str]) -> dict:
         """Register a webhook on the repository."""
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _redact_secret(self) -> str:
         """Return a redacted token string for logging."""

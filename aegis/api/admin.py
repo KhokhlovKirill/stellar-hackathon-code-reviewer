@@ -2,29 +2,15 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
-from sqlalchemy import func, select, update
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aegis.api.auth import get_current_user
-from aegis.config import get_settings
-from aegis.db.models import (
-    FalsePositive,
-    Finding,
-    GraphExecution,
-    GraphStatusEnum,
-    HumanDecisionEnum,
-    HumanReview,
-    ProviderEnum,
-    PullRequest,
-    Repository,
-    SeverityEnum,
-)
 from aegis.db.session import get_db
 from aegis.observability.logging import get_logger
 
@@ -43,7 +29,7 @@ class RegisterRepoRequest(BaseModel):
     full_name: str  # "org/repo"
     access_token: str
     webhook_secret: str | None = None
-    settings: dict = Field(default_factory=dict)
+    settings: dict = {}
 
 
 class RepoResponse(BaseModel):
@@ -85,58 +71,42 @@ class FalsePositiveRequest(BaseModel):
     reason: str | None = None
 
 
-_HUMAN_DECISION_API = {
-    "approved": HumanDecisionEnum.approve,
-    "rejected": HumanDecisionEnum.reject,
-    "ignored": HumanDecisionEnum.suppress,
-}
-
-
 # ── Repository Management ─────────────────────────────────────────────────────
 
 @router.post("/repos", response_model=RepoResponse)
-async def register_repo(
-    request: RegisterRepoRequest,
-    user: Auth,
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> RepoResponse:
+async def register_repo(request: RegisterRepoRequest, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
     """Register a repository for security scanning."""
-    try:
-        prov = ProviderEnum(request.provider.lower())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid provider") from exc
+    from aegis.db.models import Repository
+    from sqlalchemy import select
+    from cryptography.fernet import Fernet
+    from aegis.config import get_settings
 
     settings = get_settings()
     f = Fernet(settings.fernet_key.encode())
 
+    # Encrypt tokens
     encrypted_token = f.encrypt(request.access_token.encode()).decode()
-    encrypted_secret = (
-        f.encrypt(request.webhook_secret.encode()).decode() if request.webhook_secret else None
-    )
+    encrypted_secret = f.encrypt(request.webhook_secret.encode()).decode() if request.webhook_secret else None
 
-    result = await db.execute(
+    # Check if already registered
+    existing = await db.execute(
         select(Repository).where(
-            Repository.provider == prov,
-            Repository.slug == request.full_name,
+            Repository.provider == request.provider,
+            Repository.full_name == request.full_name,
         )
     )
-    if result.scalar_one_or_none() is not None:
+    if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Repository already registered")
 
-    repo_url = (
-        f"https://github.com/{request.full_name}"
-        if prov == ProviderEnum.github
-        else f"https://gitlab.com/{request.full_name}"
-    )
-
     repo = Repository(
-        provider=prov,
-        slug=request.full_name,
-        url=repo_url,
-        token_encrypted=encrypted_token,
-        webhook_secret_encrypted=encrypted_secret,
+        id=uuid.uuid4(),
+        provider=request.provider,
+        full_name=request.full_name,
+        access_token=encrypted_token,
+        webhook_secret=encrypted_secret,
         settings_json=request.settings,
-        is_active=True,
+        active=True,
+        created_at=datetime.now(timezone.utc),
     )
     db.add(repo)
     await db.commit()
@@ -145,24 +115,27 @@ async def register_repo(
     log.info("admin.repo_registered", repo=request.full_name)
     return RepoResponse(
         id=str(repo.id),
-        provider=repo.provider.value if hasattr(repo.provider, "value") else str(repo.provider),
-        full_name=repo.slug,
-        active=repo.is_active,
+        provider=repo.provider,
+        full_name=repo.full_name,
+        active=repo.active,
         created_at=repo.created_at.isoformat(),
     )
 
 
 @router.get("/repos", response_model=list[RepoResponse])
-async def list_repos(user: Auth, db: Annotated[AsyncSession, Depends(get_db)]) -> list[RepoResponse]:
+async def list_repos(user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
     """List all registered repositories."""
+    from aegis.db.models import Repository
+    from sqlalchemy import select
+
     result = await db.execute(select(Repository).order_by(Repository.created_at.desc()))
     repos = result.scalars().all()
     return [
         RepoResponse(
             id=str(r.id),
-            provider=r.provider.value if hasattr(r.provider, "value") else str(r.provider),
-            full_name=r.slug,
-            active=r.is_active,
+            provider=r.provider,
+            full_name=r.full_name,
+            active=r.active,
             created_at=r.created_at.isoformat(),
         )
         for r in repos
@@ -170,30 +143,31 @@ async def list_repos(user: Auth, db: Annotated[AsyncSession, Depends(get_db)]) -
 
 
 @router.delete("/repos/{repo_id}", status_code=204)
-async def delete_repo(repo_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]) -> None:
+async def delete_repo(repo_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
     """Remove a registered repository."""
-    try:
-        rid = int(repo_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid repository id") from exc
+    from aegis.db.models import Repository
+    from sqlalchemy import select
 
-    result = await db.execute(select(Repository).where(Repository.id == rid))
+    result = await db.execute(select(Repository).where(Repository.id == uuid.UUID(repo_id)))
     repo = result.scalar_one_or_none()
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
 
-    db.delete(repo)
+    await db.delete(repo)
     await db.commit()
 
 
 # ── Scan Management ───────────────────────────────────────────────────────────
 
 @router.get("/scans/{scan_id}", response_model=ScanStatusResponse)
-async def get_scan_status(
-    scan_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]
-) -> ScanStatusResponse:
+async def get_scan_status(scan_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
     """Get the status of a specific scan."""
-    result = await db.execute(select(GraphExecution).where(GraphExecution.scan_id == scan_id))
+    from aegis.db.models import GraphExecution, PullRequest
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(GraphExecution).where(GraphExecution.scan_id == scan_id)
+    )
     execution = result.scalar_one_or_none()
     if not execution:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -203,31 +177,24 @@ async def get_scan_status(
 
     return ScanStatusResponse(
         scan_id=execution.scan_id,
-        status=(
-            execution.status.value
-            if hasattr(execution.status, "value")
-            else str(execution.status)
-        ),
+        status=execution.status,
         current_node=execution.current_node,
         risk_score=pr.risk_score if pr else None,
-        findings=pr.findings_count if pr else None,
-        created_at=execution.started_at.isoformat(),
+        findings=pr.finding_count if pr else None,
+        created_at=execution.created_at.isoformat(),
     )
 
 
 @router.post("/scans/{scan_id}/cancel", status_code=202)
-async def cancel_scan(scan_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]) -> dict:
+async def cancel_scan(scan_id: str, user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
     """Cancel a running scan."""
+    from aegis.db.models import GraphExecution
+    from sqlalchemy import update
+
     await db.execute(
         update(GraphExecution)
-        .where(
-            GraphExecution.scan_id == scan_id,
-            GraphExecution.status == GraphStatusEnum.running,
-        )
-        .values(
-            status=GraphStatusEnum.interrupted,
-            finished_at=datetime.now(timezone.utc),
-        )
+        .where(GraphExecution.scan_id == scan_id, GraphExecution.status == "running")
+        .values(status="cancelled", updated_at=datetime.now(timezone.utc))
     )
     await db.commit()
     return {"status": "cancelled", "scan_id": scan_id}
@@ -241,36 +208,44 @@ async def submit_human_review(
     request: HumanReviewRequest,
     user: Auth,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> dict:
+):
     """Submit a human review decision to resume a paused graph."""
+    from aegis.db.models import HumanReview, GraphExecution
     from aegis.graph.runtime import resume_graph
+    from sqlalchemy import select
 
-    if request.decision not in _HUMAN_DECISION_API:
-        raise HTTPException(
-            status_code=400,
-            detail="Decision must be: approved, rejected, or ignored",
-        )
+    if request.decision not in ("approved", "rejected", "ignored"):
+        raise HTTPException(status_code=400, detail="Decision must be: approved, rejected, or ignored")
 
-    result = await db.execute(select(GraphExecution).where(GraphExecution.scan_id == scan_id))
+    # Find the execution
+    result = await db.execute(
+        select(GraphExecution).where(GraphExecution.scan_id == scan_id)
+    )
     execution = result.scalar_one_or_none()
     if not execution:
         raise HTTPException(status_code=404, detail="Scan not found")
 
+    # Save review
     review = HumanReview(
+        id=uuid.uuid4(),
         scan_id=scan_id,
-        decision=_HUMAN_DECISION_API[request.decision],
+        pr_id=execution.pr_id,
+        decision=request.decision,
         reviewer=user.get("sub", "unknown"),
-        rationale=request.reason or "",
+        reason=request.reason or "",
+        created_at=datetime.now(timezone.utc),
     )
     db.add(review)
 
+    from sqlalchemy import update
     await db.execute(
         update(GraphExecution)
         .where(GraphExecution.scan_id == scan_id)
-        .values(status=GraphStatusEnum.running)
+        .values(status="resuming")
     )
     await db.commit()
 
+    # Resume graph
     try:
         await resume_graph(
             thread_id=scan_id,
@@ -278,7 +253,7 @@ async def submit_human_review(
         )
     except Exception as exc:
         log.error("admin.resume_error", scan_id=scan_id, error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Failed to resume graph: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Failed to resume graph: {exc}")
 
     return {"status": "resumed", "scan_id": scan_id, "decision": request.decision}
 
@@ -293,20 +268,14 @@ async def get_pr_findings(
     severity: str | None = Query(None),
     limit: int = Query(100, le=500),
     offset: int = Query(0),
-) -> list[FindingResponse]:
+):
     """Get findings for a specific PR."""
-    try:
-        pr_pk = int(pr_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid pr id") from exc
+    from aegis.db.models import Finding
+    from sqlalchemy import select
 
-    stmt = select(Finding).where(Finding.pr_id == pr_pk)
+    stmt = select(Finding).where(Finding.pr_id == uuid.UUID(pr_id))
     if severity:
-        try:
-            sev = SeverityEnum(severity.lower())
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid severity") from exc
-        stmt = stmt.where(Finding.severity == sev)
+        stmt = stmt.where(Finding.severity == severity)
     stmt = stmt.order_by(Finding.severity.desc()).offset(offset).limit(limit)
 
     result = await db.execute(stmt)
@@ -317,10 +286,10 @@ async def get_pr_findings(
             id=str(f.id),
             file_path=f.file_path,
             line_number=f.line_number,
-            vuln_type=f.vuln_type or "",
-            severity=f.severity.value if hasattr(f.severity, "value") else str(f.severity),
+            vuln_type=f.vuln_type,
+            severity=f.severity,
             cwe=f.cwe,
-            description=f.description or "",
+            description=f.description,
             source=f.source or "unknown",
         )
         for f in findings
@@ -335,21 +304,17 @@ async def add_false_positive(
     request: FalsePositiveRequest,
     user: Auth,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> dict:
+):
     """Add a false positive rule for a repository."""
-    try:
-        rid = int(repo_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid repository id") from exc
-
-    pattern = request.pattern
-    if request.reason:
-        pattern = f"{pattern} # {request.reason}"
+    from aegis.db.models import FalsePositive
 
     fp = FalsePositive(
-        repo_id=rid,
-        pattern=pattern,
+        id=uuid.uuid4(),
+        repo_id=uuid.UUID(repo_id),
+        pattern=request.pattern,
         directory=request.directory or "",
+        reason=request.reason or "",
+        created_at=datetime.now(timezone.utc),
     )
     db.add(fp)
     await db.commit()
@@ -362,18 +327,18 @@ async def list_false_positives(
     repo_id: str,
     user: Auth,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[dict]:
+):
     """List all false positive rules for a repository."""
-    try:
-        rid = int(repo_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid repository id") from exc
+    from aegis.db.models import FalsePositive
+    from sqlalchemy import select
 
-    result = await db.execute(select(FalsePositive).where(FalsePositive.repo_id == rid))
+    result = await db.execute(
+        select(FalsePositive).where(FalsePositive.repo_id == uuid.UUID(repo_id))
+    )
     fps = result.scalars().all()
 
     return [
-        {"id": str(fp.id), "pattern": fp.pattern, "directory": fp.directory, "reason": ""}
+        {"id": str(fp.id), "pattern": fp.pattern, "directory": fp.directory, "reason": fp.reason}
         for fp in fps
     ]
 
@@ -382,28 +347,26 @@ async def list_false_positives(
 
 @router.get("/kb/search")
 async def search_knowledge_base(
-    user: Auth,
     q: str = Query(..., min_length=3),
     top_k: int = Query(5, le=20),
-) -> dict:
+    user: Auth = None,
+):
     """Semantic search in the knowledge base."""
     from aegis.knowledge.retrieval import search_similar
 
-    _ = user
     results = await search_similar(q, top_k=top_k)
     return {"query": q, "results": results}
 
 
 @router.get("/kb")
 async def list_kb_entries(
-    user: Auth,
     limit: int = Query(50, le=200),
     offset: int = Query(0),
-) -> dict:
+    user: Auth = None,
+):
     """List knowledge base entries."""
     from aegis.knowledge.kb import list_kb_entries as _list
 
-    _ = user
     entries = await _list(limit=limit, offset=offset)
     return {"entries": entries, "count": len(entries)}
 
@@ -416,11 +379,10 @@ async def trigger_retro_scan(
     user: Auth,
     days_back: int = Query(30, le=365),
     limit: int = Query(50, le=200),
-) -> dict:
+):
     """Trigger a retro scan of historical PRs."""
     from aegis.graph.subgraphs.retro_scan import run_retro_scan
 
-    _ = user
     summary = await run_retro_scan(repo_id=repo_id, days_back=days_back, limit=limit)
     return {"status": "initiated", "repo_id": repo_id, **summary}
 
@@ -428,17 +390,17 @@ async def trigger_retro_scan(
 # ── Statistics ────────────────────────────────────────────────────────────────
 
 @router.get("/stats")
-async def get_stats(user: Auth, db: Annotated[AsyncSession, Depends(get_db)]) -> dict:
+async def get_stats(user: Auth, db: Annotated[AsyncSession, Depends(get_db)]):
     """Get aggregate scan statistics."""
-    _ = user
+    from aegis.db.models import Repository, PullRequest, Finding, GraphExecution
+    from sqlalchemy import select, func
+
     repo_count = (await db.execute(select(func.count(Repository.id)))).scalar()
     pr_count = (await db.execute(select(func.count(PullRequest.id)))).scalar()
     finding_count = (await db.execute(select(func.count(Finding.id)))).scalar()
     active_scans = (
         await db.execute(
-            select(func.count(GraphExecution.id)).where(
-                GraphExecution.status == GraphStatusEnum.running
-            )
+            select(func.count(GraphExecution.id)).where(GraphExecution.status == "running")
         )
     ).scalar()
 
