@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 
 from aegis.graph.state import SecurityGraphState
@@ -81,20 +80,21 @@ async def _upsert_pr(session, pr_id, risk_score, risk_label, policy_decision, fi
     from sqlalchemy import cast, func, update
     from sqlalchemy.dialects.postgresql import JSONB
 
-    from aegis.db.models import PullRequest
+    from aegis.db.models import PRStatusEnum, PullRequest
 
     if pr_id:
         meta_patch = cast({"policy_decision": policy_decision}, JSONB)
         merged_meta = func.coalesce(PullRequest.analysis_metadata, cast({}, JSONB)).op("||")(
             meta_patch
         )
+        pr_status = PRStatusEnum.blocked if policy_decision == "block" else PRStatusEnum.passed
         await session.execute(
             update(PullRequest)
             .where(PullRequest.id == pr_id)
             .values(
                 risk_score=risk_score,
                 risk_label=risk_label,
-                status="reviewed",
+                status=pr_status,
                 findings_count=finding_count,
                 analysis_metadata=merged_meta,
                 updated_at=datetime.now(timezone.utc),
@@ -110,7 +110,6 @@ async def _save_findings(session, pr_id, findings: list[dict]):
 
     for f in findings:
         finding = Finding(
-            id=uuid.uuid4(),
             pr_id=pr_id,
             file_path=f.get("file_path", ""),
             line_number=f.get("line_number"),
@@ -134,11 +133,10 @@ async def _save_llm_log(session, pr_id, scan_id, tokens_used, summary):
         return
 
     log_entry = LLMLog(
-        id=uuid.uuid4(),
         pr_id=pr_id,
         scan_id=str(scan_id) if scan_id else None,
-        tokens_used=tokens_used,
-        summary=summary[:2000] if summary else "",
+        prompt=summary[:2000] if summary else "",
+        total_tokens=tokens_used,
         created_at=datetime.now(timezone.utc),
     )
     session.add(log_entry)
@@ -154,5 +152,5 @@ async def _update_graph_execution(session, scan_id, status: str):
     await session.execute(
         update(GraphExecution)
         .where(GraphExecution.scan_id == str(scan_id))
-        .values(status=status, completed_at=datetime.now(timezone.utc))
+        .values(status=status, finished_at=datetime.now(timezone.utc))
     )

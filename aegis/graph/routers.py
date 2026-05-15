@@ -9,7 +9,7 @@ from aegis.graph.state import SecurityGraphState
 
 def route_after_planner(state: SecurityGraphState) -> str:
     """After planner: skip trivial PRs or proceed with analysis."""
-    if state.get("next_action") == "skip":
+    if state.get("action") == "skip":
         return "persist"
     return "filter"
 
@@ -55,6 +55,6 @@ def route_after_human_review(state: SecurityGraphState) -> str:
 def route_after_policy(state: SecurityGraphState) -> str:
     """Decide if we create an autofix PR."""
     risk = state.get("risk_score", 0)
-    if risk >= 60 and state.get("merged_findings"):
+    if risk >= 60 and state.get("final_findings"):
         return "autofix"
     return "render"

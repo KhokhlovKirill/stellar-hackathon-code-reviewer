@@ -22,20 +22,20 @@ def build_security_graph(checkpointer=None):
     """
     # Import agents here to avoid circular imports at module load time
     from aegis.graph.agents.planner import planner_agent
-    from aegis.graph.agents.filter import filter_agent
-    from aegis.graph.agents.context import context_agent
-    from aegis.graph.agents.deterministic import deterministic_agent
-    from aegis.graph.agents.llm_a import llm_agent_a
-    from aegis.graph.agents.llm_b import llm_agent_b
-    from aegis.graph.agents.judge import judge_agent
-    from aegis.graph.agents.risk import risk_agent
-    from aegis.graph.agents.blast_radius import blast_radius_agent
-    from aegis.graph.agents.policy import policy_agent
-    from aegis.graph.agents.autofix import autofix_agent
-    from aegis.graph.agents.render import render_agent
-    from aegis.graph.agents.publish import publish_agent
-    from aegis.graph.agents.persist import persist_agent
-    from aegis.graph.agents.human_review import human_review_agent
+    from aegis.graph.agents.filter_agent import filter_agent
+    from aegis.graph.agents.context_agent import context_agent
+    from aegis.graph.agents.deterministic_agent import deterministic_agent
+    from aegis.graph.agents.llm_agent_a import llm_agent_a
+    from aegis.graph.agents.llm_agent_b import llm_agent_b
+    from aegis.graph.agents.judge_agent import judge_agent
+    from aegis.graph.agents.risk_agent import risk_agent
+    from aegis.graph.agents.blast_radius_agent import blast_radius_agent
+    from aegis.graph.agents.policy_agent import policy_agent
+    from aegis.graph.agents.autofix_agent import autofix_agent
+    from aegis.graph.agents.render_agent import render_agent
+    from aegis.graph.agents.publish_agent import publish_agent
+    from aegis.graph.agents.persist_agent import persist_agent
+    from aegis.graph.agents.human_review_agent import human_review_agent
 
     builder = StateGraph(SecurityGraphState)
 

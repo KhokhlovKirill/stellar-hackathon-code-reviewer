@@ -63,7 +63,7 @@ async def policy_agent(state: SecurityGraphState) -> SecurityGraphState:
         reasons.insert(0, "Hardcoded secret or high-entropy string detected")
 
     # Human decision overrides
-    if human_decision == "approved":
+    if human_decision == "approve":
         log.info("policy.human_approved")
         return {
             **state,
@@ -71,7 +71,7 @@ async def policy_agent(state: SecurityGraphState) -> SecurityGraphState:
             "policy_reasons": ["Human reviewer approved"],
             "filtered_final_findings": filtered_findings,
         }
-    elif human_decision == "rejected":
+    elif human_decision == "reject":
         reasons.insert(0, "Human reviewer rejected this PR")
 
     # Determine final decision

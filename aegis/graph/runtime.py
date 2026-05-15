@@ -39,7 +39,7 @@ async def execute_graph(initial_state: dict[str, Any]) -> dict[str, Any]:
 
     try:
         result = await asyncio.wait_for(
-            asyncio.get_event_loop().run_in_executor(
+            asyncio.get_running_loop().run_in_executor(
                 None, lambda: graph.invoke(initial_state, config=config)
             ),
             timeout=settings.max_graph_execution_seconds,
@@ -70,7 +70,7 @@ async def resume_graph(scan_id: str, update: dict[str, Any]) -> dict[str, Any]:
     langgraph_resume_total.inc()
 
     try:
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None, lambda: graph.invoke(update, config=config)
         )
         log.info("graph.resume.done", scan_id=scan_id, status=result.get("status"))
