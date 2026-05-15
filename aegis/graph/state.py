@@ -126,10 +126,14 @@ class ChatState(TypedDict, total=False):
     pr_number: int
     repo_full_name: str
     provider: str
-    command: str                       # raw @secbot command string
+    message: str                       # raw incoming PR comment body
+    command: str                       # parsed command name (help/ignore/...)
+    args: dict[str, Any]               # parsed command arguments
     intent: str | None                 # explain | false_positive | ignore | scan_full | replay
     context: dict[str, Any]            # retrieved finding context
-    response: str | None
+    response: str | None               # raw handler output
+    formatted_response: str            # final markdown posted back to the PR
+    executed: bool
     messages: Annotated[list[BaseMessage], add_messages]
 
 

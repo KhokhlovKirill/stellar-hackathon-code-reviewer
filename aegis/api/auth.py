@@ -18,9 +18,15 @@ log = get_logger(__name__)
 router = APIRouter(tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
 
-_ALGORITHM = "HS256"
-_ACCESS_TOKEN_EXPIRE_MINUTES = 60
 _REFRESH_TOKEN_EXPIRE_DAYS = 30
+
+
+def _algorithm() -> str:
+    return get_settings().jwt_algorithm or "HS256"
+
+
+def _access_token_expire_minutes() -> int:
+    return get_settings().jwt_access_token_expire_minutes
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -34,7 +40,7 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
-    expires_in: int = _ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    expires_in: int
 
 
 class RefreshRequest(BaseModel):
@@ -45,7 +51,7 @@ class RefreshRequest(BaseModel):
 
 def create_access_token(subject: str, extra: dict | None = None) -> str:
     settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=_ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=_access_token_expire_minutes())
     payload = {
         "sub": subject,
         "exp": expire,
@@ -53,7 +59,7 @@ def create_access_token(subject: str, extra: dict | None = None) -> str:
         "type": "access",
         **(extra or {}),
     }
-    return jwt.encode(payload, settings.jwt_secret_key, algorithm=_ALGORITHM)
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=_algorithm())
 
 
 def create_refresh_token(subject: str) -> str:
@@ -65,13 +71,13 @@ def create_refresh_token(subject: str) -> str:
         "iat": datetime.now(timezone.utc),
         "type": "refresh",
     }
-    return jwt.encode(payload, settings.jwt_refresh_secret_key, algorithm=_ALGORITHM)
+    return jwt.encode(payload, settings.jwt_refresh_secret_key, algorithm=_algorithm())
 
 
 def verify_token(token: str, secret: str, expected_type: str = "access") -> dict:
     """Decode and validate a JWT. Raises HTTPException on failure."""
     try:
-        payload = jwt.decode(token, secret, algorithms=[_ALGORITHM])
+        payload = jwt.decode(token, secret, algorithms=[_algorithm()])
         if payload.get("type") != expected_type:
             raise HTTPException(status_code=401, detail="Invalid token type")
         return payload
@@ -132,7 +138,11 @@ async def login(request: LoginRequest):
     refresh_token = create_refresh_token(subject=request.username)
 
     log.info("auth.login_success", username=request.username)
-    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=_access_token_expire_minutes() * 60,
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -145,7 +155,11 @@ async def refresh(request: RefreshRequest):
     access_token = create_access_token(subject=subject, extra={"role": "admin"})
     new_refresh = create_refresh_token(subject=subject)
 
-    return TokenResponse(access_token=access_token, refresh_token=new_refresh)
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=new_refresh,
+        expires_in=_access_token_expire_minutes() * 60,
+    )
 
 
 @router.get("/me")

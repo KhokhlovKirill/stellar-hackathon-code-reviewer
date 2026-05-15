@@ -47,15 +47,12 @@ async def format_response_node(state: ChatState) -> ChatState:
     return {**state, "formatted_response": formatted}
 
 
-def _route_command(state: ChatState) -> str:
-    command = state.get("command", "unknown")
-    if command == "unknown":
-        return "format_response"
-    return "execute_command"
-
-
 def build_chatops_subgraph() -> StateGraph:
-    """Build and compile the ChatOps subgraph."""
+    """Build and compile the ChatOps subgraph.
+
+    Every command — including ``unknown`` — runs through ``execute_command`` so
+    the user gets a helpful "did you mean …" reply instead of an empty bubble.
+    """
     builder = StateGraph(ChatState)
 
     builder.add_node("parse_command", parse_command_node)
@@ -63,14 +60,7 @@ def build_chatops_subgraph() -> StateGraph:
     builder.add_node("format_response", format_response_node)
 
     builder.set_entry_point("parse_command")
-    builder.add_conditional_edges(
-        "parse_command",
-        _route_command,
-        {
-            "execute_command": "execute_command",
-            "format_response": "format_response",
-        },
-    )
+    builder.add_edge("parse_command", "execute_command")
     builder.add_edge("execute_command", "format_response")
     builder.add_edge("format_response", END)
 

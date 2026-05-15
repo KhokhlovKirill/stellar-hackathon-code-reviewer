@@ -132,17 +132,72 @@ async def _cmd_unknown(args: dict, ctx: dict) -> str:
 
 
 async def _cmd_rescan(args: dict, ctx: dict) -> str:
+    """Trigger a fresh scan of the current PR.
+
+    Re-fetches access token, repo slug and head SHA from the database so the
+    worker has everything it needs to fetch the diff (otherwise the scan
+    silently fails inside the worker).
+    """
+    from cryptography.fernet import Fernet
+
+    from aegis.config import get_settings
+    from aegis.db.models import PullRequest, Repository
+    from aegis.db.session import get_session_factory
     from aegis.worker.graph_worker import enqueue_scan
+    from sqlalchemy import select
 
     pr_id = ctx.get("pr_id")
     pr_number = ctx.get("pr_number")
     repo_id = ctx.get("repo_id")
 
+    if not repo_id or pr_number is None:
+        return "❌ Missing PR context — cannot rescan."
+
     try:
+        settings = get_settings()
+        fernet = Fernet(settings.fernet_key.encode())
+
+        repo_full_name = ctx.get("repo_full_name", "")
+        access_token = ctx.get("access_token", "")
+        provider = ctx.get("provider", "github")
+        head_sha = ""
+
+        # Always hydrate from DB so we have a fresh head SHA + decrypted token.
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            repo_pk = int(repo_id) if str(repo_id).isdigit() else None
+            if repo_pk is not None:
+                repo = (await session.execute(
+                    select(Repository).where(Repository.id == repo_pk)
+                )).scalar_one_or_none()
+                if repo is not None:
+                    repo_full_name = repo_full_name or repo.slug
+                    provider = provider or (
+                        repo.provider.value if hasattr(repo.provider, "value") else str(repo.provider)
+                    )
+                    if not access_token and repo.token_encrypted:
+                        try:
+                            access_token = fernet.decrypt(repo.token_encrypted.encode()).decode()
+                        except Exception:
+                            access_token = ""
+
+            if pr_id and str(pr_id).isdigit():
+                pr_row = (await session.execute(
+                    select(PullRequest).where(PullRequest.id == int(pr_id))
+                )).scalar_one_or_none()
+                if pr_row is not None:
+                    meta = pr_row.analysis_metadata or {}
+                    head_sha = meta.get("head_sha", "") or head_sha
+
         job_id = await enqueue_scan(
-            repo_id=repo_id,
-            pr_id=pr_id,
-            pr_number=pr_number,
+            repo_id=str(repo_id),
+            pr_id=str(pr_id) if pr_id else None,
+            pr_number=int(pr_number),
+            repo_full_name=repo_full_name,
+            access_token=access_token,
+            head_sha=head_sha,
+            provider=provider,
+            pr_metadata={"number": int(pr_number), "head_sha": head_sha},
             force=args.get("force", False),
         )
         return f"🔄 Re-scan queued (job: `{job_id}`). Results will be posted when complete."
@@ -154,27 +209,32 @@ async def _cmd_rescan(args: dict, ctx: dict) -> str:
 async def _cmd_ignore(args: dict, ctx: dict) -> str:
     file_path = args.get("file", "")
     line = args.get("line")
-    reason = args.get("reason", "")
     repo_id = ctx.get("repo_id")
 
     if not file_path:
         return "Usage: `@secbot ignore <file>:<line> [reason]`"
 
     try:
-        from aegis.db.session import get_session_factory
-        from aegis.db.models import FalsePositive
-        import uuid
         from datetime import datetime, timezone
+
+        from aegis.db.models import FalsePositive
+        from aegis.db.session import get_session_factory
+
+        repo_pk: int | None
+        try:
+            repo_pk = int(repo_id) if repo_id is not None else None
+        except (TypeError, ValueError):
+            repo_pk = None
+        if repo_pk is None:
+            return "❌ Cannot save ignore rule without a numeric repo_id."
 
         session_factory = get_session_factory()
         async with session_factory() as session:
             async with session.begin():
                 fp = FalsePositive(
-                    id=uuid.uuid4(),
-                    repo_id=repo_id,
+                    repo_id=repo_pk,
                     pattern=f"{file_path}:{line}" if line else file_path,
-                    directory=file_path.rsplit("/", 1)[0] if "/" in file_path else "",
-                    reason=reason,
+                    directory=file_path.rsplit("/", 1)[0] if "/" in file_path else None,
                     created_at=datetime.now(timezone.utc),
                 )
                 session.add(fp)
@@ -190,19 +250,27 @@ async def _cmd_false_positive(args: dict, ctx: dict) -> str:
 
 
 async def _cmd_status(args: dict, ctx: dict) -> str:
-    from aegis.db.session import get_session_factory
     from aegis.db.models import GraphExecution
+    from aegis.db.session import get_session_factory
     from sqlalchemy import select
 
-    scan_id = ctx.get("scan_id")
     pr_id = ctx.get("pr_id")
+
+    pr_pk: int | None
+    try:
+        pr_pk = int(pr_id) if pr_id is not None else None
+    except (TypeError, ValueError):
+        pr_pk = None
+
+    if pr_pk is None:
+        return "No PR context available."
 
     try:
         session_factory = get_session_factory()
         async with session_factory() as session:
             result = await session.execute(
                 select(GraphExecution)
-                .where(GraphExecution.pr_id == pr_id)
+                .where(GraphExecution.pr_id == pr_pk)
                 .order_by(GraphExecution.started_at.desc())
                 .limit(1)
             )
@@ -216,6 +284,7 @@ async def _cmd_status(args: dict, ctx: dict) -> str:
             "running": "🔄",
             "failed": "❌",
             "interrupted": "⏸️",
+            "resumed": "▶️",
         }.get(execution.status, "❓")
 
         return (
@@ -229,12 +298,17 @@ async def _cmd_status(args: dict, ctx: dict) -> str:
 
 
 async def _cmd_findings(args: dict, ctx: dict) -> str:
-    from aegis.db.session import get_session_factory
     from aegis.db.models import Finding
+    from aegis.db.session import get_session_factory
     from sqlalchemy import select
 
     pr_id = ctx.get("pr_id")
-    if not pr_id:
+    pr_pk: int | None
+    try:
+        pr_pk = int(pr_id) if pr_id is not None else None
+    except (TypeError, ValueError):
+        pr_pk = None
+    if pr_pk is None:
         return "No PR context available."
 
     try:
@@ -242,11 +316,14 @@ async def _cmd_findings(args: dict, ctx: dict) -> str:
         async with session_factory() as session:
             result = await session.execute(
                 select(Finding)
-                .where(Finding.pr_id == pr_id)
-                .order_by(Finding.severity.desc())
+                .where(Finding.pr_id == pr_pk)
+                .order_by(Finding.created_at.desc())
                 .limit(20)
             )
             findings = result.scalars().all()
+        # Sort by severity in Python so 'critical' shows first.
+        _SEV = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+        findings = sorted(findings, key=lambda f: -_SEV.get(f.severity, 0))
 
         if not findings:
             return "✅ No findings for this PR."
@@ -263,50 +340,82 @@ async def _cmd_findings(args: dict, ctx: dict) -> str:
 
 
 async def _cmd_approve(args: dict, ctx: dict) -> str:
-    return await _handle_human_decision("approved", args, ctx)
+    return await _handle_human_decision("approve", args, ctx)
 
 
 async def _cmd_reject(args: dict, ctx: dict) -> str:
-    return await _handle_human_decision("rejected", args, ctx)
+    return await _handle_human_decision("reject", args, ctx)
 
 
 async def _handle_human_decision(decision: str, args: dict, ctx: dict) -> str:
-    from aegis.graph.runtime import resume_graph
-    from aegis.db.session import get_session_factory
-    from aegis.db.models import HumanReview, GraphExecution
-    from sqlalchemy import select, update
-    import uuid
     from datetime import datetime, timezone
+
+    from aegis.db.models import GraphExecution, GraphStatusEnum, HumanDecisionEnum, HumanReview
+    from aegis.db.session import get_session_factory
+    from aegis.graph.runtime import resume_graph
+    from sqlalchemy import select, update
 
     scan_id = ctx.get("scan_id")
     pr_id = ctx.get("pr_id")
     reviewer = ctx.get("user", "unknown")
     reason = args.get("reason", "")
 
+    # If no scan_id in context, look up the latest scan for this PR so a user
+    # can /approve a PR without knowing the scan ID.
+    if not scan_id and pr_id:
+        try:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                pr_pk = int(pr_id) if str(pr_id).isdigit() else None
+                if pr_pk is not None:
+                    row = (await session.execute(
+                        select(GraphExecution)
+                        .where(GraphExecution.pr_id == pr_pk)
+                        .order_by(GraphExecution.started_at.desc())
+                        .limit(1)
+                    )).scalar_one_or_none()
+                    if row is not None:
+                        scan_id = row.scan_id
+        except Exception:
+            pass
+
+    try:
+        decision_enum = HumanDecisionEnum(decision)
+    except ValueError:
+        return f"❌ Unknown decision: {decision}"
+
     try:
         session_factory = get_session_factory()
         async with session_factory() as session:
             async with session.begin():
                 hr = HumanReview(
-                    id=uuid.uuid4(),
-                    scan_id=scan_id,
-                    pr_id=pr_id,
-                    decision=decision,
+                    scan_id=scan_id or "",
+                    decision=decision_enum,
                     reviewer=reviewer,
-                    reason=reason,
+                    rationale=reason or None,
                     created_at=datetime.now(timezone.utc),
                 )
                 session.add(hr)
 
-        # Resume the graph with the decision
-        if scan_id:
-            await resume_graph(
-                thread_id=str(scan_id),
-                update={"human_decision": decision},
-            )
+                if scan_id:
+                    await session.execute(
+                        update(GraphExecution)
+                        .where(GraphExecution.scan_id == scan_id)
+                        .values(
+                            status=GraphStatusEnum.resumed,
+                            resumed_count=GraphExecution.resumed_count + 1,
+                        )
+                    )
 
-        emoji = "✅" if decision == "approved" else "❌"
-        return f"{emoji} PR **{decision}** by @{reviewer}" + (f"\n> {reason}" if reason else "")
+        # Resume the graph with the decision (best-effort, may not be paused)
+        if scan_id:
+            try:
+                await resume_graph(scan_id=str(scan_id), update={"human_decision": decision})
+            except Exception as exc:
+                log.warning("commands.resume_warning", scan_id=scan_id, error=str(exc))
+
+        emoji = "✅" if decision == "approve" else "❌"
+        return f"{emoji} PR **{decision}d** by @{reviewer}" + (f"\n> {reason}" if reason else "")
     except Exception as exc:
         log.error("commands.decision_error", error=str(exc))
         return f"❌ Failed to record decision: {exc}"
@@ -335,19 +444,24 @@ async def _cmd_retroscan(args: dict, ctx: dict) -> str:
 
 
 async def _cmd_summary(args: dict, ctx: dict) -> str:
-    from aegis.db.session import get_session_factory
     from aegis.db.models import PullRequest
+    from aegis.db.session import get_session_factory
     from sqlalchemy import select
 
     pr_id = ctx.get("pr_id")
-    if not pr_id:
+    pr_pk: int | None
+    try:
+        pr_pk = int(pr_id) if pr_id is not None else None
+    except (TypeError, ValueError):
+        pr_pk = None
+    if pr_pk is None:
         return "No PR context."
 
     try:
         session_factory = get_session_factory()
         async with session_factory() as session:
             result = await session.execute(
-                select(PullRequest).where(PullRequest.id == pr_id)
+                select(PullRequest).where(PullRequest.id == pr_pk)
             )
             pr = result.scalar_one_or_none()
 

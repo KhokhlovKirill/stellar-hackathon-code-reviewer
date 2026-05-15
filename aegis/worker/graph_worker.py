@@ -270,23 +270,26 @@ async def _fetch_pr_data(
     return diff_files, full_diff, repo_settings
 
 
+_STATUS_MAP = {
+    "completed": "completed",
+    "failed": "failed",
+    "running": "running",
+    "interrupted": "interrupted",
+    "resumed": "resumed",
+}
+
+
 async def _update_scan_status(scan_id: str, status: str, error: str | None = None):
-    """Update GraphExecution status in the database."""
+    """Update GraphExecution status in the database (best-effort)."""
     try:
         from aegis.db.session import get_session_factory
         from aegis.db.models import GraphExecution, GraphStatusEnum
         from sqlalchemy import select
 
-        # Worker uses string statuses; DB column is GraphStatusEnum (VARCHAR).
-        if status == "completed":
-            mapped = GraphStatusEnum.completed
-        elif status == "failed":
-            mapped = GraphStatusEnum.failed
-        elif status == "running":
-            mapped = GraphStatusEnum.running
-        elif status == "interrupted":
-            mapped = GraphStatusEnum.interrupted
-        else:
+        mapped_value = _STATUS_MAP.get(status, "failed")
+        try:
+            mapped = GraphStatusEnum(mapped_value)
+        except ValueError:
             mapped = GraphStatusEnum.failed
 
         session_factory = get_session_factory()
@@ -309,7 +312,7 @@ async def _update_scan_status(scan_id: str, status: str, error: str | None = Non
                     row.finished_at = now
                 if error is not None and mapped == GraphStatusEnum.failed:
                     meta = dict(row.metadata_json or {})
-                    meta["last_error"] = error
+                    meta["last_error"] = error[:2000]
                     row.metadata_json = meta
     except Exception as exc:
         log.warning("worker.db_update_error", scan_id=scan_id, error=str(exc))

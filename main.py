@@ -49,13 +49,27 @@ def create_app() -> FastAPI:
     )
 
     # ── CORS ─────────────────────────────────────────────────────────────────
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"] if settings.is_development else [],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # When ``allow_origins=["*"]`` is set together with ``allow_credentials=True``
+    # browsers reject the response — so we keep credentials only in non-wildcard
+    # production setups (where origins are configured explicitly).
+    if settings.is_development:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    else:
+        # In production deployments, restrict origins externally (e.g. via nginx)
+        # or override here. Default to a safe no-CORS config.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # ── Request timing middleware ─────────────────────────────────────────────
     @app.middleware("http")

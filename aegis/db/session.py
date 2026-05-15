@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -44,7 +45,7 @@ async def init_db() -> None:
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
     # Verify connectivity
     async with _engine.connect() as conn:
-        await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+        await conn.execute(text("SELECT 1"))
     log.info("db.connected", url=settings.database_url.split("@")[-1])
 
 

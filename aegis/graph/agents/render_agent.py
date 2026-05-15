@@ -13,15 +13,22 @@ _SEVERITY_EMOJI = {
     "medium": "🟡",
     "low": "🔵",
     "info": "⚪",
+    # Aggregate risk labels
     "green": "✅",
+    "yellow": "🟡",
+    "red": "🔴",
 }
 
+# shields.io named colors that render as proper badge colors.
 _BADGE_COLORS = {
     "critical": "critical",
     "high": "important",
     "medium": "yellow",
     "low": "informational",
+    "info": "lightgrey",
     "green": "success",
+    "yellow": "yellow",
+    "red": "critical",
 }
 
 

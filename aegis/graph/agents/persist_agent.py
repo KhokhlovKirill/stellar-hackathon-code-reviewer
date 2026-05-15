@@ -169,9 +169,14 @@ async def _save_llm_log(
     tokens_used: int,
     summary: str,
 ) -> None:
+    """Save a per-scan LLM audit row. Skip when nothing was sent to the LLM
+    (e.g. planner decided to ``skip``) so the log table doesn't fill with
+    empty rows on noisy webhook traffic."""
     from aegis.db.models import LLMLog
 
     if not pr_id:
+        return
+    if tokens_used <= 0 and not summary:
         return
 
     log_entry = LLMLog(

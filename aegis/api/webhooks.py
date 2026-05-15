@@ -264,6 +264,10 @@ async def github_comment_webhook(
     x_hub_signature_256: Annotated[str | None, Header()] = None,
 ):
     """Handle GitHub PR comment webhooks for @secbot commands."""
+    WEBHOOKS_RECEIVED.labels(
+        provider="github", event_type=x_github_event or "unknown"
+    ).inc()
+
     if x_github_event not in ("issue_comment", "pull_request_review_comment"):
         return {"status": "ignored"}
 
@@ -283,6 +287,13 @@ async def github_comment_webhook(
     repo = await _get_repo(db, provider="github", full_name=repo_full_name)
     if not repo:
         return {"status": "ignored", "reason": "repo not registered"}
+
+    # Verify HMAC signature when a webhook secret is configured on the repo.
+    if repo.webhook_secret:
+        secret = _decrypt_secret(repo.webhook_secret)
+        if not _verify_github_signature(body, x_hub_signature_256 or "", secret):
+            log.warning("github.comment_webhook.invalid_signature", repo=repo_full_name)
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     pr = await _get_pr(db, repo.id, pr_number)
 
@@ -454,21 +465,31 @@ async def _handle_chatops_command(message: str, context: dict):
         from aegis.graph.subgraphs.chatops import run_chatops
         from aegis.dialog.memory import append_message
 
-        pr_id = context.get("pr_id", "")
+        pr_id = context.get("pr_id") or ""
 
-        await append_message(pr_id, "user", message, {"user": context.get("user")})
+        if pr_id:
+            await append_message(pr_id, "user", message, {"user": context.get("user")})
         response = await run_chatops(message, context)
-        await append_message(pr_id, "bot", response)
+        if pr_id:
+            await append_message(pr_id, "bot", response)
 
         # Post response back to PR
         provider_name = context.get("provider", "github")
         repo_full_name = context.get("repo_full_name", "")
         pr_number = context.get("pr_number")
+        access_token = context.get("access_token", "")
 
-        if repo_full_name and pr_number:
+        if repo_full_name and pr_number and access_token:
             from aegis.providers import get_provider
-            provider = get_provider(provider_name, context.get("access_token", ""), repo_full_name)
-            await provider.post_comment(repo=repo_full_name, pr_number=pr_number, body=response)
+            provider = get_provider(provider_name, access_token, repo_full_name)
+            async with provider:
+                try:
+                    await provider.publish_pr_comment(
+                        pr_number=int(pr_number),
+                        body=response,
+                    )
+                except Exception as exc:
+                    log.warning("webhooks.chatops_post_failed", error=str(exc))
 
     except Exception as exc:
         log.error("webhooks.chatops_error", error=str(exc))

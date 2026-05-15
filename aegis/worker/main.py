@@ -8,7 +8,7 @@ import logging
 from arq.connections import RedisSettings
 from arq.worker import create_worker
 
-from aegis.observability.logging import setup_logging
+from aegis.observability.logging import setup_logging  # alias of configure_logging
 from aegis.observability.metrics import setup_metrics
 
 log = logging.getLogger(__name__)
