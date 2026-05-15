@@ -279,6 +279,131 @@ async def add_repo_submit(
     return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
 
+@router.post("/projects/{project_id}/quick-connect")
+async def quick_connect_submit(
+    request: Request,
+    project_id: int,
+    repo_url: str = Form(...),
+    access_token: str = Form(...),
+    public_url: str = Form(...),
+    severity_gate: str = Form("medium"),
+    merge_block: str = Form("critical"),
+    user: User = _user_web,
+) -> Any:
+    import re
+    import secrets as _secrets
+
+    import httpx
+
+    from aegis.vault import encrypt
+
+    async with get_session() as s:
+        if await _owned(s, project_id, user.id) is None:
+            return RedirectResponse("/dashboard", status_code=303)
+
+    # parse slug from URL
+    url = repo_url.strip().rstrip("/")
+    m = re.search(r"github\.com/([^/]+/[^/]+)", url)
+    if not m:
+        slug_raw = url
+    else:
+        slug_raw = m.group(1).removesuffix(".git")
+
+    _gh_headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/vnd.github+json",
+    }
+
+    # fetch repo info
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(
+                f"https://api.github.com/repos/{slug_raw}", headers=_gh_headers
+            )
+        if r.status_code != 200:
+            msg = r.json().get("message", "")
+            return _page(request, "project.html",
+                         user=user,
+                         project={"id": project_id, "name": "", "description": ""},
+                         repos=[], scans=[],
+                         providers=[p.value for p in Provider],
+                         qc_error=f"GitHub API error {r.status_code}: {msg}")
+        info = r.json()
+    except httpx.HTTPError as exc:
+        return _page(request, "project.html",
+                     user=user,
+                     project={"id": project_id, "name": "", "description": ""},
+                     repos=[], scans=[],
+                     providers=[p.value for p in Provider],
+                     qc_error=f"Network error: {exc}")
+
+    external_id = str(info["id"])
+    canonical_slug = info["full_name"]
+    webhook_secret_val = _secrets.token_hex(24)
+    webhook_url = f"{public_url.rstrip('/')}/webhooks/github"
+
+    # register webhook on GitHub
+    hook_id = None
+    async with httpx.AsyncClient(timeout=15) as client:
+        hr = await client.post(
+            f"https://api.github.com/repos/{canonical_slug}/hooks",
+            headers=_gh_headers,
+            json={
+                "name": "web", "active": True, "events": ["pull_request"],
+                "config": {
+                    "url": webhook_url, "content_type": "json",
+                    "secret": webhook_secret_val, "insecure_ssl": "0",
+                },
+            },
+        )
+    if hr.status_code in (200, 201):
+        hook_id = hr.json().get("id")
+
+    async with get_session() as s:
+        existing = (await s.execute(
+            select(Repository).where(
+                Repository.provider == Provider.GITHUB.value,
+                Repository.external_id == external_id,
+            )
+        )).scalar_one_or_none()
+        repo = existing or Repository(
+            provider=Provider.GITHUB.value, external_id=external_id,
+            slug=canonical_slug, status="active",
+        )
+        repo.slug = canonical_slug
+        repo.project_id = project_id
+        if existing is None:
+            s.add(repo)
+            await s.flush()
+        s.add(RepoSecret(
+            repo_id=repo.id, kind="access_token", ciphertext=encrypt(access_token)
+        ))
+        s.add(RepoSecret(
+            repo_id=repo.id, kind="webhook_secret", ciphertext=encrypt(webhook_secret_val)
+        ))
+        policy = (
+            await s.execute(select(RepoPolicy).where(RepoPolicy.repo_id == repo.id))
+        ).scalar_one_or_none() or RepoPolicy(repo_id=repo.id)
+        policy.severity_gate = severity_gate
+        policy.merge_block = merge_block
+        s.add(policy)
+        await s.flush()
+
+    log.info("web.quick_connect", project_id=project_id, slug=canonical_slug,
+             hook_id=hook_id, webhook_url=webhook_url)
+
+    if hook_id:
+        hook_status = f"webhook #{hook_id} registered automatically"
+    else:
+        hook_status = "webhook NOT registered (token needs admin:repo_hook scope)"
+    return _page(request, "quick_connect_done.html",
+                 user=user,
+                 slug=canonical_slug,
+                 webhook_url=webhook_url,
+                 hook_status=hook_status,
+                 project_id=project_id)
+
+
 @router.get("/scans/{scan_id}", response_class=HTMLResponse)
 async def scan_detail(
     request: Request, scan_id: str, user: User = _user_web

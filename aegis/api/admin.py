@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hmac
 import re
+import secrets
 from typing import Any, cast
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
@@ -416,6 +418,144 @@ async def stats(_: str = Depends(require_admin)) -> dict[str, Any]:
             ).scalar_one()
         )
         return {"scans": scans, "findings": findings, "blocked_or_high_risk": blocked}
+
+
+class QuickConnectRequest(BaseModel):
+    repo_url: str = Field(min_length=10, max_length=300)
+    access_token: str = Field(min_length=1)
+    public_url: str = Field(min_length=1, max_length=300)
+    severity_gate: str = "medium"
+    merge_block: str = "critical"
+
+
+class QuickConnectOut(BaseModel):
+    repo_id: int
+    slug: str
+    external_id: str
+    webhook_secret: str
+    webhook_url: str
+    github_hook_id: int | None
+
+
+async def _github_repo_info(slug: str, token: str) -> dict[str, Any]:
+    """Fetch repo metadata from GitHub API."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(
+            f"https://api.github.com/repos/{slug}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        )
+    if r.status_code == 404:
+        raise HTTPException(
+            status_code=404, detail="GitHub repo not found — check URL or token scope"
+        )
+    if r.status_code == 401:
+        raise HTTPException(status_code=401, detail="GitHub token invalid or expired")
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"GitHub API error {r.status_code}")
+    return r.json()  # type: ignore[no-any-return]
+
+
+async def _register_github_webhook(
+    slug: str, token: str, webhook_url: str, secret: str
+) -> int | None:
+    """Register webhook on GitHub; returns hook id or None if forbidden."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(
+            f"https://api.github.com/repos/{slug}/hooks",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            json={
+                "name": "web",
+                "active": True,
+                "events": ["pull_request"],
+                "config": {
+                    "url": webhook_url,
+                    "content_type": "json",
+                    "secret": secret,
+                    "insecure_ssl": "0",
+                },
+            },
+        )
+    if r.status_code in (201, 200):
+        return int(r.json().get("id", 0)) or None
+    return None
+
+
+def _parse_github_slug(url: str) -> str:
+    """Extract 'owner/repo' from a GitHub URL or bare slug."""
+    url = url.strip().rstrip("/")
+    # bare slug
+    if "/" in url and not url.startswith("http"):
+        return url
+    # full URL: https://github.com/owner/repo
+    m = re.search(r"github\.com/([^/]+/[^/]+)", url)
+    if not m:
+        raise HTTPException(status_code=422, detail="Cannot parse GitHub repo URL")
+    return m.group(1).removesuffix(".git")
+
+
+@router.post(
+    "/projects/{project_id}/repos/quick-connect",
+    response_model=QuickConnectOut,
+    status_code=201,
+)
+async def quick_connect_repo(
+    project_id: int, req: QuickConnectRequest, user: User = _user_dep
+) -> QuickConnectOut:
+    """One-step repo connect: URL + PAT → fetch info + register webhook + save."""
+    slug = _parse_github_slug(req.repo_url)
+    info = await _github_repo_info(slug, req.access_token)
+    external_id = str(info["id"])
+    canonical_slug = info["full_name"]
+
+    webhook_secret_val = secrets.token_hex(24)
+    webhook_url = f"{req.public_url.rstrip('/')}/webhooks/github"
+
+    hook_id = await _register_github_webhook(
+        canonical_slug, req.access_token, webhook_url, webhook_secret_val
+    )
+
+    async with get_session() as session:
+        await _owned_project(session, project_id, user.id)
+        existing = (
+            await session.execute(
+                select(Repository).where(
+                    Repository.provider == Provider.GITHUB.value,
+                    Repository.external_id == external_id,
+                )
+            )
+        ).scalar_one_or_none()
+        repo = existing or Repository(
+            provider=Provider.GITHUB.value,
+            external_id=external_id,
+            slug=canonical_slug,
+            status="active",
+        )
+        repo.slug = canonical_slug
+        repo.project_id = project_id
+        if existing is None:
+            session.add(repo)
+            await session.flush()
+        session.add(RepoSecret(
+            repo_id=repo.id, kind="access_token", ciphertext=encrypt(req.access_token)
+        ))
+        session.add(RepoSecret(
+            repo_id=repo.id, kind="webhook_secret", ciphertext=encrypt(webhook_secret_val)
+        ))
+        policy = (
+            await session.execute(select(RepoPolicy).where(RepoPolicy.repo_id == repo.id))
+        ).scalar_one_or_none() or RepoPolicy(repo_id=repo.id)
+        policy.severity_gate = req.severity_gate
+        policy.merge_block = req.merge_block
+        session.add(policy)
+        await session.flush()
+        return QuickConnectOut(
+            repo_id=repo.id,
+            slug=canonical_slug,
+            external_id=external_id,
+            webhook_secret=webhook_secret_val,
+            webhook_url=webhook_url,
+            github_hook_id=hook_id,
+        )
 
 
 async def _policy_for(session: Any, repo_id: int) -> RepoPolicy | None:
