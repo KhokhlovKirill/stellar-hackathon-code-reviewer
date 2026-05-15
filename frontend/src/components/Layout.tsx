@@ -76,6 +76,7 @@ export function Layout() {
               <NavLink to="/review">Анализ</NavLink>
               {user && <NavLink to="/dashboard">Проекты</NavLink>}
               {user && <NavLink to="/chat">Чат</NavLink>}
+              {user && <NavLink to="/knowledge">База знаний</NavLink>}
             </nav>
 
             {/* Right */}

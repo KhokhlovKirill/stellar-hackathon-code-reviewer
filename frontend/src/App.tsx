@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { ChatPage } from "./pages/ChatPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { KnowledgePage } from "./pages/KnowledgePage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProjectPage } from "./pages/ProjectPage";
 import { QuickConnectDonePage } from "./pages/QuickConnectDonePage";
@@ -34,6 +35,7 @@ export default function App() {
               element={<QuickConnectDonePage />}
             />
             <Route path="chat" element={<ChatPage />} />
+            <Route path="knowledge" element={<KnowledgePage />} />
             <Route path="review" element={<ReviewPage />} />
             <Route path="scans/:scanId" element={<ScanPage />} />
           </Route>
