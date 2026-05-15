@@ -9,11 +9,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aegis.db.session import get_db
-from aegis.db.models import Repository, PullRequest, GraphExecution
+from aegis.db.models import (
+    GraphExecution,
+    GraphStatusEnum,
+    PRStatusEnum,
+    PullRequest,
+    Repository,
+)
 from aegis.observability.logging import get_logger
 from aegis.observability.metrics import WEBHOOKS_RECEIVED
 
@@ -115,12 +121,9 @@ async def github_webhook(
     # Create GraphExecution record
     scan_id = str(uuid.uuid4())
     execution = GraphExecution(
-        id=uuid.uuid4(),
         scan_id=scan_id,
         pr_id=pr.id,
-        repo_id=repo.id,
-        status="queued",
-        created_at=datetime.now(timezone.utc),
+        status=GraphStatusEnum.running,
     )
     db.add(execution)
     await db.commit()
@@ -217,12 +220,9 @@ async def gitlab_webhook(
 
     scan_id = str(uuid.uuid4())
     execution = GraphExecution(
-        id=uuid.uuid4(),
         scan_id=scan_id,
         pr_id=pr.id,
-        repo_id=repo.id,
-        status="queued",
-        created_at=datetime.now(timezone.utc),
+        status=GraphStatusEnum.running,
     )
     db.add(execution)
     await db.commit()
@@ -350,30 +350,38 @@ async def _upsert_pr(
     )
     pr = result.scalar_one_or_none()
 
+    meta_patch: dict = {}
+    if head_sha:
+        meta_patch["head_sha"] = head_sha
+    if description:
+        meta_patch["description"] = description
+
     if pr:
+        merged_meta = dict(pr.analysis_metadata or {})
+        merged_meta.update(meta_patch)
         await db.execute(
             update(PullRequest)
             .where(PullRequest.id == pr.id)
             .values(
-                head_sha=head_sha,
-                status="open",
+                pr_title=title or pr.pr_title,
+                author=author or pr.author,
+                base_branch=base_branch or pr.base_branch,
+                head_branch=head_branch or pr.head_branch,
+                analysis_metadata=merged_meta,
+                status=PRStatusEnum.pending,
                 updated_at=datetime.now(timezone.utc),
             )
         )
     else:
         pr = PullRequest(
-            id=uuid.uuid4(),
             repo_id=repo_id,
             pr_number=pr_number,
-            head_sha=head_sha,
-            title=title,
-            description=description,
-            author=author,
-            base_branch=base_branch,
-            head_branch=head_branch,
-            status="open",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            pr_title=title or None,
+            author=author or None,
+            base_branch=base_branch or None,
+            head_branch=head_branch or None,
+            status=PRStatusEnum.pending,
+            analysis_metadata=meta_patch if meta_patch else {},
         )
         db.add(pr)
 
@@ -383,10 +391,12 @@ async def _upsert_pr(
 
 async def _update_pr_status(db: AsyncSession, repo_id, pr_number: int, status: str):
     from sqlalchemy import update
+
+    enum_status = PRStatusEnum.closed if status == "closed" else PRStatusEnum.pending
     await db.execute(
         update(PullRequest)
         .where(PullRequest.repo_id == repo_id, PullRequest.pr_number == pr_number)
-        .values(status=status, updated_at=datetime.now(timezone.utc))
+        .values(status=enum_status, updated_at=datetime.now(timezone.utc))
     )
     await db.commit()
 

@@ -51,6 +51,7 @@ class PRStatusEnum(str, enum.Enum):
     passed = "passed"
     blocked = "blocked"
     error = "error"
+    closed = "closed"  # PR/MR merged or closed (lifecycle, not scan outcome)
 
 
 class GraphStatusEnum(str, enum.Enum):

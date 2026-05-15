@@ -241,23 +241,36 @@ async def _update_scan_status(scan_id: str, status: str, error: str | None = Non
     """Update GraphExecution status in the database."""
     try:
         from aegis.db.session import get_session_factory
-        from aegis.db.models import GraphExecution
-        from sqlalchemy import update
+        from aegis.db.models import GraphExecution, GraphStatusEnum
+        from sqlalchemy import select
+
+        # Worker uses string statuses; DB column is GraphStatusEnum (VARCHAR).
+        if status == "completed":
+            mapped = GraphStatusEnum.completed
+        elif status == "failed":
+            mapped = GraphStatusEnum.failed
+        elif status == "running":
+            mapped = GraphStatusEnum.running
+        else:
+            mapped = GraphStatusEnum.failed
 
         session_factory = get_session_factory()
         async with session_factory() as session:
             async with session.begin():
-                update_values = {
-                    "status": status,
-                    "updated_at": datetime.now(timezone.utc),
-                }
-                if status == "completed":
-                    update_values["completed_at"] = datetime.now(timezone.utc)
-
-                await session.execute(
-                    update(GraphExecution)
-                    .where(GraphExecution.scan_id == scan_id)
-                    .values(**update_values)
+                res = await session.execute(
+                    select(GraphExecution).where(GraphExecution.scan_id == scan_id)
                 )
+                row = res.scalar_one_or_none()
+                if row is None:
+                    return
+
+                now = datetime.now(timezone.utc)
+                row.status = mapped
+                if mapped in (GraphStatusEnum.completed, GraphStatusEnum.failed):
+                    row.finished_at = now
+                if error is not None and mapped == GraphStatusEnum.failed:
+                    meta = dict(row.metadata_json or {})
+                    meta["last_error"] = error
+                    row.metadata_json = meta
     except Exception as exc:
         log.warning("worker.db_update_error", scan_id=scan_id, error=str(exc))
