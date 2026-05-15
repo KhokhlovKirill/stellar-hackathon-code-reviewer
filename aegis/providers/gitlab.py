@@ -139,24 +139,84 @@ class GitLabProvider(HttpMixin):
         return r.text if r.status_code == 200 else None
 
     async def post_inline_comment(self, pr: PullRequest, token: str, c: ReviewComment) -> str:
-        raise NotImplementedError("gitlab.post_inline_comment — Phase 6")
+        payload: dict[str, object] = {"body": c.body}
+        if c.line > 0:
+            payload["position"] = {
+                "position_type": "text",
+                "base_sha": pr.base_sha,
+                "start_sha": pr.base_sha,
+                "head_sha": pr.head_sha,
+                "new_path": c.file,
+                "new_line": c.line,
+            }
+        r = await self._request(
+            "POST",
+            f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/discussions",
+            token,
+            "post_inline_comment",
+            json=payload,
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("gitlab", "post_inline_comment failed", r.status_code)
+        return str(r.json().get("id", ""))
 
     async def post_summary(self, pr: PullRequest, token: str, body: str) -> str:
-        raise NotImplementedError("gitlab.post_summary — Phase 6")
+        r = await self._request(
+            "POST",
+            f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/notes",
+            token,
+            "post_summary",
+            json={"body": body},
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("gitlab", "post_summary failed", r.status_code)
+        return str(r.json().get("id", ""))
 
     async def reply_in_thread(self, pr: PullRequest, token: str, thread_id: str, body: str) -> str:
-        raise NotImplementedError("gitlab.reply_in_thread — Phase 7")
+        r = await self._request(
+            "POST",
+            f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/discussions/{thread_id}/notes",
+            token,
+            "reply_in_thread",
+            json={"body": body},
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("gitlab", "reply_in_thread failed", r.status_code)
+        return str(r.json().get("id", ""))
 
     async def set_status_check(
         self, pr: PullRequest, token: str, decision: MergePolicyDecision, url: str
     ) -> None:
-        raise NotImplementedError("gitlab.set_status_check — Phase 6")
+        payload = {
+            "state": "failed" if decision.state == "failure" else decision.state,
+            "name": decision.context,
+            "target_url": url,
+            "description": decision.reason[:255],
+        }
+        r = await self._request(
+            "POST",
+            f"/projects/{self._pid(pr)}/statuses/{pr.head_sha}",
+            token,
+            "set_status_check",
+            json=payload,
+        )
+        if r.status_code not in (200, 201):
+            raise ProviderError("gitlab", "set_status_check failed", r.status_code)
 
     async def request_changes(self, pr: PullRequest, token: str, body: str) -> None:
-        raise NotImplementedError("gitlab.request_changes — Phase 6")
+        await self.post_summary(pr, token, f"**Aegis requests changes**\n\n{body}")
 
     async def get_thread(self, pr: PullRequest, token: str, thread_id: str) -> DiscussionThread:
-        raise NotImplementedError("gitlab.get_thread — Phase 7")
+        r = await self._request(
+            "GET",
+            f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/discussions/{thread_id}",
+            token,
+            "get_thread",
+        )
+        if r.status_code != 200:
+            raise ProviderError("gitlab", "get_thread failed", r.status_code)
+        d = r.json()
+        return DiscussionThread(thread_id=thread_id, pr_id=pr.pr_id, comments=d.get("notes", []))
 
 
 def _parse_gitlab_diff(diff: str) -> list[Hunk]:
