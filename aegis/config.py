@@ -109,6 +109,20 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         return self.app_env == "development"
 
+    @property
+    def gitlab_web_origin(self) -> str:
+        """HTTPS origin for GitLab project links (no trailing slash).
+
+        Derived from ``gitlab_api_base_url`` by stripping a trailing ``/api/v4``.
+        If the URL has an unexpected shape, falls back to https://gitlab.com.
+        """
+        base = self.gitlab_api_base_url.strip().rstrip("/")
+        suffix = "/api/v4"
+        if base.lower().endswith(suffix):
+            origin = base[: -len(suffix)].rstrip("/")
+            return origin if origin else "https://gitlab.com"
+        return "https://gitlab.com"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

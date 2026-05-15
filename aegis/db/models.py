@@ -135,7 +135,10 @@ def repository_url(provider: str, slug: str) -> str:
         case "github":
             return f"https://github.com/{slug}"
         case "gitlab":
-            return f"https://gitlab.com/{slug}"
+            from aegis.config import get_settings
+
+            origin = get_settings().gitlab_web_origin
+            return f"{origin}/{slug}"
         case "bitbucket":
             return f"https://bitbucket.org/{slug}"
         case _:
