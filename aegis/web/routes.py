@@ -404,6 +404,35 @@ async def quick_connect_submit(
                  project_id=project_id)
 
 
+@router.get("/review", response_class=HTMLResponse)
+async def review_form(request: Request, user: User | None = _user_opt) -> HTMLResponse:
+    return _page(request, "review.html", user=user, result=None, error=None, url="")
+
+
+@router.post("/review", response_class=HTMLResponse)
+async def review_submit(
+    request: Request,
+    repo_url: str = Form(...),
+    token: str = Form(""),
+    user: User | None = _user_opt,
+) -> HTMLResponse:
+    from aegis.pipeline.simple_scan import run_simple_scan
+
+    url = repo_url.strip()
+    if not url:
+        return _page(request, "review.html", user=user, result=None,
+                     error="Please enter a GitHub URL", url="")
+
+    log.info("web.simple_scan", url=url)
+    result = await run_simple_scan(url, token=token.strip() or None)
+
+    if result.error:
+        return _page(request, "review.html", user=user, result=None,
+                     error=result.error, url=url)
+
+    return _page(request, "review.html", user=user, result=result, error=None, url=url)
+
+
 @router.get("/scans/{scan_id}", response_class=HTMLResponse)
 async def scan_detail(
     request: Request, scan_id: str, user: User = _user_web

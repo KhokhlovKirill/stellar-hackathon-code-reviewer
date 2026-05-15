@@ -40,7 +40,7 @@ class LLMRouter:
                 base_url=s.openrouter_base_url,
                 model=s.openrouter_generalist_model,
                 api_key=s.openrouter_api_key,
-                strict_schema=True,
+                strict_schema=False,  # deepseek / qwen don't support json_schema format
                 extra_headers={"HTTP-Referer": "https://aegis.local", "X-Title": "Aegis"},
             ),
             "cloud-judge": OpenAICompatibleClient(
@@ -48,7 +48,7 @@ class LLMRouter:
                 base_url=s.openrouter_base_url,
                 model=s.openrouter_judge_model,
                 api_key=s.openrouter_api_key,
-                strict_schema=True,
+                strict_schema=False,  # use prompt-based JSON for reliability across models
                 extra_headers={"HTTP-Referer": "https://aegis.local", "X-Title": "Aegis"},
             ),
         }
