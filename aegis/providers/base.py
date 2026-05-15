@@ -57,6 +57,34 @@ class VCSProvider(Protocol):
         self, pr: PullRequest, token: str, thread_id: str
     ) -> DiscussionThread: ...
 
+    # Autofix-PR surface (implemented per provider; used by aegis.pipeline.autofix).
+    async def get_default_branch(self, pr: PullRequest, token: str) -> str: ...
+
+    async def create_branch(
+        self, pr: PullRequest, token: str, new_branch: str, from_sha: str
+    ) -> None: ...
+
+    async def create_or_update_file(
+        self,
+        pr: PullRequest,
+        token: str,
+        branch: str,
+        path: str,
+        content_b64: str,
+        message: str,
+        sha: str | None = None,
+    ) -> None: ...
+
+    async def open_pull_request(
+        self,
+        token: str,
+        repo_slug: str,
+        title: str,
+        body: str,
+        head_branch: str,
+        base_branch: str,
+    ) -> str: ...
+
 
 class HttpMixin:
     """Authed httpx client with VCS-call metrics + audit logging."""

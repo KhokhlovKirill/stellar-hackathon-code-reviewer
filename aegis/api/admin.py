@@ -1,22 +1,35 @@
-"""Backend REST API consumed by the Admin Portal frontend."""
+"""Backend REST API: user auth, projects, repos, scans (consumed by web + clients)."""
 
 from __future__ import annotations
 
 import hmac
-from typing import Any
+import re
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
 from aegis.api.auth import issue_token, require_admin
+from aegis.api.security import hash_password, require_user, verify_password
 from aegis.config import get_settings
 from aegis.db import get_session
-from aegis.db.models import FindingRow, RepoPolicy, RepoSecret, Repository, Scan
+from aegis.db.models import (
+    FindingRow,
+    Project,
+    RepoPolicy,
+    RepoSecret,
+    Repository,
+    Scan,
+    User,
+)
 from aegis.schemas import Provider
 from aegis.vault import encrypt
 
-router = APIRouter(prefix="/api", tags=["admin"])
+router = APIRouter(prefix="/api", tags=["api"])
+
+# Module-level dependency singletons (avoids B008; mirrors aegis.api.auth style).
+_user_dep = Depends(require_user)
 
 
 class LoginRequest(BaseModel):
@@ -24,9 +37,39 @@ class LoginRequest(BaseModel):
     password: str
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=200)
+    display_name: str = Field(default="", max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def _valid_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL_RE.match(v):
+            raise ValueError("invalid email address")
+        return v
+
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"  # noqa: S105 - OAuth token type, not a password
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str = Field(default="", max_length=2000)
+
+
+class ProjectOut(BaseModel):
+    id: int
+    name: str
+    description: str
+    repo_count: int
+    created_at: str
 
 
 class RepoCreate(BaseModel):
@@ -51,16 +94,187 @@ class RepoOut(BaseModel):
     policy: dict[str, Any]
 
 
+@router.post("/auth/register", response_model=LoginResponse, status_code=201)
+async def register(req: RegisterRequest) -> LoginResponse:
+    async with get_session() as session:
+        dup = (
+            await session.execute(select(User.id).where(User.email == req.email))
+        ).scalar_one_or_none()
+        if dup is not None:
+            raise HTTPException(status_code=409, detail="email already registered")
+        user = User(
+            email=req.email,
+            password_hash=hash_password(req.password),
+            display_name=req.display_name or req.email.split("@")[0],
+        )
+        session.add(user)
+        await session.flush()
+    return LoginResponse(access_token=issue_token(req.email))
+
+
 @router.post("/auth/login", response_model=LoginResponse)
 async def login(req: LoginRequest) -> LoginResponse:
+    """Authenticate a registered user by email; fall back to the bootstrap admin."""
+    email = req.username.strip().lower()
+    async with get_session() as session:
+        user = (
+            await session.execute(select(User).where(User.email == email))
+        ).scalar_one_or_none()
+    if user is not None and verify_password(req.password, user.password_hash):
+        return LoginResponse(access_token=issue_token(user.email))
+
+    # Bootstrap admin from env (control-plane access before any user exists).
     settings = get_settings()
-    if not settings.admin_password:
-        raise HTTPException(status_code=503, detail="admin password is not configured")
-    if req.username != settings.admin_user or not hmac.compare_digest(
-        req.password, settings.admin_password
+    if (
+        settings.admin_password
+        and req.username == settings.admin_user
+        and hmac.compare_digest(req.password, settings.admin_password)
     ):
-        raise HTTPException(status_code=401, detail="invalid credentials")
-    return LoginResponse(access_token=issue_token(req.username))
+        return LoginResponse(access_token=issue_token(req.username))
+    raise HTTPException(status_code=401, detail="invalid credentials")
+
+
+@router.post("/projects", response_model=ProjectOut, status_code=201)
+async def create_project(
+    req: ProjectCreate, user: User = _user_dep
+) -> ProjectOut:
+    async with get_session() as session:
+        dup = (
+            await session.execute(
+                select(Project.id).where(
+                    Project.owner_id == user.id, Project.name == req.name
+                )
+            )
+        ).scalar_one_or_none()
+        if dup is not None:
+            raise HTTPException(status_code=409, detail="project name already exists")
+        project = Project(
+            owner_id=user.id, name=req.name, description=req.description
+        )
+        session.add(project)
+        await session.flush()
+        return ProjectOut(
+            id=project.id, name=project.name, description=project.description,
+            repo_count=0, created_at=project.created_at.isoformat(),
+        )
+
+
+@router.get("/projects", response_model=list[ProjectOut])
+async def list_projects(user: User = _user_dep) -> list[ProjectOut]:
+    async with get_session() as session:
+        projects = (
+            await session.execute(
+                select(Project).where(Project.owner_id == user.id)
+                .order_by(Project.created_at.desc())
+            )
+        ).scalars().all()
+        out: list[ProjectOut] = []
+        for p in projects:
+            n = int(
+                (
+                    await session.execute(
+                        select(func.count(Repository.id)).where(
+                            Repository.project_id == p.id
+                        )
+                    )
+                ).scalar_one()
+            )
+            out.append(ProjectOut(
+                id=p.id, name=p.name, description=p.description,
+                repo_count=n, created_at=p.created_at.isoformat(),
+            ))
+        return out
+
+
+async def _owned_project(session: Any, project_id: int, user_id: int) -> Project:
+    project = (
+        await session.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
+    if project is None or project.owner_id != user_id:
+        raise HTTPException(status_code=404, detail="project not found")
+    return cast(Project, project)
+
+
+@router.get("/projects/{project_id}")
+async def project_detail(
+    project_id: int, user: User = _user_dep
+) -> dict[str, Any]:
+    async with get_session() as session:
+        project = await _owned_project(session, project_id, user.id)
+        repos = (
+            await session.execute(
+                select(Repository).where(Repository.project_id == project_id)
+            )
+        ).scalars().all()
+        slugs = [r.slug for r in repos]
+        scans = (
+            (
+                await session.execute(
+                    select(Scan).where(Scan.repo_slug.in_(slugs))
+                    .order_by(Scan.started_at.desc()).limit(50)
+                )
+            ).scalars().all()
+            if slugs else []
+        )
+        return {
+            "project": {
+                "id": project.id,
+                "name": project.name,
+                "description": project.description,
+            },
+            "repos": [_repo_out(r).model_dump() for r in repos],
+            "scans": [
+                {
+                    "id": s.id, "repo_slug": s.repo_slug, "pr_id": s.pr_id,
+                    "status": s.status, "risk_score": s.risk_score,
+                    "risk_label": s.risk_label,
+                    "started_at": s.started_at.isoformat(),
+                }
+                for s in scans
+            ],
+        }
+
+
+@router.post("/projects/{project_id}/repos", response_model=RepoOut, status_code=201)
+async def add_repo_to_project(
+    project_id: int, req: RepoCreate, user: User = _user_dep
+) -> RepoOut:
+    async with get_session() as session:
+        await _owned_project(session, project_id, user.id)
+        existing = (
+            await session.execute(
+                select(Repository).where(
+                    Repository.provider == req.provider.value,
+                    Repository.external_id == req.external_id,
+                )
+            )
+        ).scalar_one_or_none()
+        repo = existing or Repository(
+            provider=req.provider.value, external_id=req.external_id,
+            slug=req.slug, status="active",
+        )
+        repo.slug = req.slug
+        repo.project_id = project_id
+        if existing is None:
+            session.add(repo)
+            await session.flush()
+        session.add(RepoSecret(
+            repo_id=repo.id, kind="access_token",
+            ciphertext=encrypt(req.access_token),
+        ))
+        session.add(RepoSecret(
+            repo_id=repo.id, kind="webhook_secret",
+            ciphertext=encrypt(req.webhook_secret),
+        ))
+        policy = repo.policy or RepoPolicy(repo_id=repo.id)
+        policy.severity_gate = req.severity_gate
+        policy.merge_block = req.merge_block
+        policy.ignore_globs = req.ignore_globs
+        policy.ensemble_profile = req.ensemble_profile
+        policy.lang = req.lang
+        session.add(policy)
+        await session.flush()
+        return _repo_out(repo)
 
 
 @router.get("/repos", response_model=list[RepoOut])

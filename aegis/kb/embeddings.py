@@ -6,6 +6,8 @@ returns None so the KB stage degrades to a no-op instead of failing the scan.
 
 from __future__ import annotations
 
+import math
+
 import httpx
 
 from aegis.config import get_config, get_settings
@@ -49,9 +51,9 @@ def cosine(a: list[float], b: list[float]) -> float:
     """Cosine similarity. Returns 0.0 for mismatched/empty/zero vectors."""
     if not a or not b or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    na = sum(x * x for x in a) ** 0.5
-    nb = sum(y * y for y in b) ** 0.5
+    dot = math.fsum(x * y for x, y in zip(a, b, strict=False))
+    na = math.sqrt(math.fsum(x * x for x in a))
+    nb = math.sqrt(math.fsum(y * y for y in b))
     if na == 0.0 or nb == 0.0:
         return 0.0
     return dot / (na * nb)

@@ -30,17 +30,47 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))  # pbkdf2: salt$hash
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    projects: Mapped[list[Project]] = relationship(back_populates="owner")
+
+
+class Project(Base):
+    __tablename__ = "projects"
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_project_owner_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    owner: Mapped[User] = relationship(back_populates="projects")
+    repos: Mapped[list[Repository]] = relationship(back_populates="project")
+
+
 class Repository(Base):
     __tablename__ = "repositories"
     __table_args__ = (UniqueConstraint("provider", "external_id", name="uq_repo_provider_extid"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     provider: Mapped[str] = mapped_column(String(16))
     external_id: Mapped[str] = mapped_column(String(255))
     slug: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(16), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    project: Mapped[Project | None] = relationship(back_populates="repos")
     secrets: Mapped[list[RepoSecret]] = relationship(back_populates="repo")
     policy: Mapped[RepoPolicy | None] = relationship(back_populates="repo", uselist=False)
 
