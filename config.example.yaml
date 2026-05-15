@@ -12,7 +12,7 @@ queue:
   retry_backoff_base_seconds: 2
 
 diff:
-  context_lines: 3                        # narrow context around changed lines
+  context_lines: 50                       # Smart Context Window around changed hunks
   max_files: 300
   max_total_added_lines: 20000
   per_scan_token_budget: 120000

@@ -93,6 +93,7 @@ async def run_llm_analysis(state: PipelineState) -> None:
         pr_id=state.pr.pr_id,
         files=state.code_files,
         deterministic_findings=det,
+        context_map=state.context_map,
     )
 
     async def _run(role: str) -> LLMCompletion | None:
@@ -138,6 +139,7 @@ async def run_llm_analysis(state: PipelineState) -> None:
                     pr_id=state.pr.pr_id,
                     files=state.code_files,
                     candidates=[*det, *candidates],
+                    context_map=state.context_map,
                 ),
                 schema=schema,
             )

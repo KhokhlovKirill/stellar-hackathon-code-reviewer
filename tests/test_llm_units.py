@@ -96,7 +96,10 @@ def test_review_prompt_marks_diff_as_untrusted_data() -> None:
         pr_id="12",
         files=[_file()],
         deterministic_findings=[],
+        context_map={"app/db.py": "@@ context app/db.py:1-2 @@\n1: def f(): pass"},
     )
     assert "untrusted data" in messages[0]["content"]
     assert "<<<DIFF>>>" in messages[1]["content"]
+    assert "<<<CONTEXT>>>" in messages[1]["content"]
+    assert "context app/db.py" in messages[1]["content"]
     assert "new=7" in messages[1]["content"]

@@ -28,6 +28,7 @@ def review_messages(
     pr_id: str,
     files: list[FileChange],
     deterministic_findings: list[Finding],
+    context_map: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
     body = [
         f"Repository: {repo}",
@@ -39,6 +40,10 @@ def review_messages(
         "<<<DIFF>>>",
         _format_diff(files),
         "<<<END_DIFF>>>",
+        "",
+        "<<<CONTEXT>>>",
+        _format_context(context_map or {}),
+        "<<<END_CONTEXT>>>",
     ]
     return [
         {"role": "system", "content": SYSTEM_REVIEW},
@@ -52,6 +57,7 @@ def judge_messages(
     pr_id: str,
     files: list[FileChange],
     candidates: list[Finding],
+    context_map: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
     body = [
         f"Repository: {repo}",
@@ -63,6 +69,10 @@ def judge_messages(
         "<<<DIFF>>>",
         _format_diff(files),
         "<<<END_DIFF>>>",
+        "",
+        "<<<CONTEXT>>>",
+        _format_context(context_map or {}),
+        "<<<END_CONTEXT>>>",
     ]
     return [
         {"role": "system", "content": SYSTEM_JUDGE},
@@ -101,3 +111,13 @@ def _format_findings(findings: list[Finding]) -> str:
             }
         )
     return repr(rows)
+
+
+def _format_context(context_map: dict[str, str]) -> str:
+    if not context_map:
+        return "No extra context available."
+    parts: list[str] = []
+    for path, context in context_map.items():
+        parts.append(f"FILE {path}")
+        parts.append(context)
+    return "\n".join(parts)

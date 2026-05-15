@@ -163,6 +163,7 @@ async def _run_optional_stages(state) -> None:  # type: ignore[no-untyped-def]
     """
     stages = [
         ("filter", "aegis.pipeline.filter", "apply_filter"),
+        ("context", "aegis.pipeline.context", "enrich_context"),
         ("deterministic", "aegis.pipeline.deterministic_stage", "run_deterministic"),
         ("llm", "aegis.pipeline.llm_stage", "run_llm_analysis"),
         ("risk_score", "aegis.pipeline.risk_score", "compute_risk_score"),
