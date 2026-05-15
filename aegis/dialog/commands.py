@@ -203,7 +203,7 @@ async def _cmd_status(args: dict, ctx: dict) -> str:
             result = await session.execute(
                 select(GraphExecution)
                 .where(GraphExecution.pr_id == pr_id)
-                .order_by(GraphExecution.created_at.desc())
+                .order_by(GraphExecution.started_at.desc())
                 .limit(1)
             )
             execution = result.scalar_one_or_none()
@@ -222,7 +222,7 @@ async def _cmd_status(args: dict, ctx: dict) -> str:
             f"{status_emoji} **Scan Status**: {execution.status}\n"
             f"- **Scan ID**: `{execution.scan_id}`\n"
             f"- **Current Node**: {execution.current_node or 'N/A'}\n"
-            f"- **Started**: {execution.created_at.strftime('%Y-%m-%d %H:%M UTC') if execution.created_at else 'N/A'}"
+            f"- **Started**: {execution.started_at.strftime('%Y-%m-%d %H:%M UTC') if execution.started_at else 'N/A'}"
         )
     except Exception as exc:
         return f"❌ Failed to get status: {exc}"
@@ -360,8 +360,8 @@ async def _cmd_summary(args: dict, ctx: dict) -> str:
         return (
             f"**Security Summary for PR #{pr.pr_number}**\n\n"
             f"{risk_emoji} **Risk**: {getattr(pr, 'risk_label', 'N/A')} (score: {getattr(pr, 'risk_score', 0)}/100)\n"
-            f"- **Findings**: {getattr(pr, 'finding_count', 0)}\n"
-            f"- **Policy**: {getattr(pr, 'policy_decision', 'N/A')}"
+            f"- **Findings**: {getattr(pr, 'findings_count', 0)}\n"
+            f"- **Policy**: {(pr.analysis_metadata or {}).get('policy_decision', 'N/A')}"
         )
     except Exception as exc:
         return f"❌ Failed to get summary: {exc}"

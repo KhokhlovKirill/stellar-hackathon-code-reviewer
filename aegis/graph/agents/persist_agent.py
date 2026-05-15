@@ -78,10 +78,16 @@ async def persist_agent(state: SecurityGraphState) -> SecurityGraphState:
 
 
 async def _upsert_pr(session, pr_id, risk_score, risk_label, policy_decision, finding_count):
-    from sqlalchemy import update
+    from sqlalchemy import cast, func, update
+    from sqlalchemy.dialects.postgresql import JSONB
+
     from aegis.db.models import PullRequest
 
     if pr_id:
+        meta_patch = cast({"policy_decision": policy_decision}, JSONB)
+        merged_meta = func.coalesce(PullRequest.analysis_metadata, cast({}, JSONB)).op("||")(
+            meta_patch
+        )
         await session.execute(
             update(PullRequest)
             .where(PullRequest.id == pr_id)
@@ -89,8 +95,8 @@ async def _upsert_pr(session, pr_id, risk_score, risk_label, policy_decision, fi
                 risk_score=risk_score,
                 risk_label=risk_label,
                 status="reviewed",
-                finding_count=finding_count,
-                policy_decision=policy_decision,
+                findings_count=finding_count,
+                analysis_metadata=merged_meta,
                 updated_at=datetime.now(timezone.utc),
             )
         )

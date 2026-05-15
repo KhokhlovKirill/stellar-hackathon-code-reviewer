@@ -189,8 +189,8 @@ async def get_scan_status(scan_id: str, user: Auth, db: Annotated[AsyncSession, 
         status=execution.status,
         current_node=execution.current_node,
         risk_score=pr.risk_score if pr else None,
-        findings=pr.finding_count if pr else None,
-        created_at=execution.created_at.isoformat(),
+        findings=pr.findings_count if pr else None,
+        created_at=execution.started_at.isoformat(),
     )
 
 
@@ -203,7 +203,7 @@ async def cancel_scan(scan_id: str, user: Auth, db: Annotated[AsyncSession, Depe
     await db.execute(
         update(GraphExecution)
         .where(GraphExecution.scan_id == scan_id, GraphExecution.status == "running")
-        .values(status="cancelled", updated_at=datetime.now(timezone.utc))
+        .values(status="cancelled", finished_at=datetime.now(timezone.utc))
     )
     await db.commit()
     return {"status": "cancelled", "scan_id": scan_id}
