@@ -51,13 +51,24 @@ class Settings(BaseSettings):
     )
 
     lmstudio_base_url: str = Field("http://host.docker.internal:1234/v1", alias="LMSTUDIO_BASE_URL")
+    # infosec specialist (don-agent-v3 / qwen3 finetuned)
     lmstudio_secure_model: str = Field("don-agent-v3", alias="LMSTUDIO_SECURE_MODEL")
+    # generalist security analyst (large reasoning model)
+    lmstudio_generalist_model: str = Field(
+        "qwen3.6-35b-a3b-ud-mlx", alias="LMSTUDIO_GENERALIST_MODEL"
+    )
+    # judge (consolidation) — defaults to generalist if not set
+    lmstudio_judge_model: str = Field(
+        "qwen3.6-35b-a3b-ud-mlx", alias="LMSTUDIO_JUDGE_MODEL"
+    )
     lmstudio_base_model: str = Field(
         "qwen3.6-35b-a3b-ud-mlx", alias="LMSTUDIO_BASE_MODEL"
     )
     lmstudio_embed_model: str = Field(
         "text-embedding-nomic-embed-text-v1.5", alias="LMSTUDIO_EMBED_MODEL"
     )
+    # Sequential model swap: unload previous model before loading next (saves RAM)
+    lmstudio_swap_models: bool = Field(True, alias="LMSTUDIO_SWAP_MODELS")
 
     @field_validator("vault_key")
     @classmethod

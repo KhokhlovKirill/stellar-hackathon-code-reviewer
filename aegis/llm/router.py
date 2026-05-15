@@ -1,4 +1,12 @@
-"""Tier selection, health checks and fallback for LLM analysis."""
+"""Tier selection, health checks and fallback for LLM analysis.
+
+Local-swap mode (LMSTUDIO_SWAP_MODELS=true):
+  All roles run on local LM Studio models. Only one model is loaded at a time;
+  the manager unloads the previous before loading the next. Role → model mapping:
+    detector_a  → LMSTUDIO_GENERALIST_MODEL  (qwen3.6-35b, large reasoning model)
+    detector_b  → LMSTUDIO_SECURE_MODEL      (don-agent-v3, infosec specialist)
+    judge       → LMSTUDIO_JUDGE_MODEL       (defaults to generalist model)
+"""
 
 from __future__ import annotations
 
@@ -18,6 +26,9 @@ class LLMRouter:
         self.settings = get_settings()
         self._health_cache: dict[str, tuple[float, bool]] = {}
 
+    def _swap_enabled(self) -> bool:
+        return self.settings.lmstudio_swap_models
+
     def _clients(self) -> dict[str, LLMClient]:
         s = self.settings
         return {
@@ -25,6 +36,20 @@ class LLMRouter:
                 tier="local-secure",
                 base_url=s.lmstudio_base_url,
                 model=s.lmstudio_secure_model,
+                api_key="",
+                strict_schema=False,
+            ),
+            "local-generalist": OpenAICompatibleClient(
+                tier="local-generalist",
+                base_url=s.lmstudio_base_url,
+                model=s.lmstudio_generalist_model,
+                api_key="",
+                strict_schema=False,
+            ),
+            "local-judge": OpenAICompatibleClient(
+                tier="local-judge",
+                base_url=s.lmstudio_base_url,
+                model=s.lmstudio_judge_model,
                 api_key="",
                 strict_schema=False,
             ),
@@ -40,7 +65,7 @@ class LLMRouter:
                 base_url=s.openrouter_base_url,
                 model=s.openrouter_generalist_model,
                 api_key=s.openrouter_api_key,
-                strict_schema=False,  # deepseek / qwen don't support json_schema format
+                strict_schema=False,
                 extra_headers={"HTTP-Referer": "https://aegis.local", "X-Title": "Aegis"},
             ),
             "cloud-judge": OpenAICompatibleClient(
@@ -48,7 +73,7 @@ class LLMRouter:
                 base_url=s.openrouter_base_url,
                 model=s.openrouter_judge_model,
                 api_key=s.openrouter_api_key,
-                strict_schema=False,  # use prompt-based JSON for reliability across models
+                strict_schema=False,
                 extra_headers={"HTTP-Referer": "https://aegis.local", "X-Title": "Aegis"},
             ),
         }
@@ -64,16 +89,42 @@ class LLMRouter:
         return ok
 
     def _fallback_order(self, role: str) -> list[str]:
+        if self._swap_enabled():
+            # Local-only sequential mode — no cloud fallback
+            if role == "detector_a":
+                return ["local-generalist", "local-base"]
+            if role == "detector_b":
+                return ["local-secure", "local-generalist"]
+            if role == "judge":
+                return ["local-judge", "local-generalist"]
+            raise ValueError(f"unknown llm role: {role}")
+
+        # Default: primary from config + multi-tier cloud/local fallback
         if role == "detector_a":
-            primary = self.cfg.detector_a
-            return [primary, "cloud-generalist", "local-base", "cloud-judge"]
+            return [self.cfg.detector_a, "cloud-generalist", "local-generalist", "local-base"]
         if role == "detector_b":
-            primary = self.cfg.detector_b
-            return [primary, "local-base", "cloud-generalist", "local-secure"]
+            return [self.cfg.detector_b, "local-base", "cloud-generalist", "local-secure"]
         if role == "judge":
-            primary = self.cfg.judge
-            return [primary, "cloud-judge", "local-secure", "cloud-generalist"]
+            return [self.cfg.judge, "cloud-judge", "local-judge", "cloud-generalist"]
         raise ValueError(f"unknown llm role: {role}")
+
+    def _model_for_tier(self, tier: str) -> str | None:
+        """Return the LM Studio model ID for a tier (local-* tiers only)."""
+        s = self.settings
+        return {
+            "local-secure": s.lmstudio_secure_model,
+            "local-generalist": s.lmstudio_generalist_model,
+            "local-judge": s.lmstudio_judge_model,
+            "local-base": s.lmstudio_base_model,
+        }.get(tier)
+
+    async def _ensure_local_model(self, tier: str) -> str | None:
+        """Ensure the right model is loaded. Returns active model ID or None."""
+        model_id = self._model_for_tier(tier)
+        if model_id is None:
+            return None
+        from aegis.llm.lmstudio_manager import ensure_model
+        return await ensure_model(self.settings.lmstudio_base_url, model_id)
 
     async def complete(
         self,
@@ -92,6 +143,27 @@ class LLMRouter:
             if client is None:
                 continue
             attempted.append(tier)
+
+            # Swap model before health check (swap mode only)
+            active_model: str | None = None
+            if self._swap_enabled() and tier.startswith("local-"):
+                try:
+                    active_model = await self._ensure_local_model(tier)
+                except Exception as exc:
+                    log.warning("llm.swap_failed", tier=tier, error=str(exc))
+                    last_error = LLMError(f"{tier}: model swap failed: {exc}")
+                    continue
+
+            # If swap manager returned a different active model, use an ad-hoc client
+            if active_model and active_model != client.model:
+                client = OpenAICompatibleClient(
+                    tier=tier,
+                    base_url=self.settings.lmstudio_base_url,
+                    model=active_model,
+                    api_key="",
+                    strict_schema=False,
+                )
+
             if not await self._healthy(client):
                 last_error = LLMError(f"{tier}: health check failed")
                 continue

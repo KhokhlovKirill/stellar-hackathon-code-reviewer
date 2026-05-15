@@ -265,8 +265,18 @@ async def run_simple_scan(url: str, token: str | None = None) -> SimpleScanResul
     # Deterministic scan (always)
     det_findings = scan_secrets(code_files)
 
-    # LLM scan (via OpenRouter)
+    # LLM scan (local models with sequential swap, or cloud fallback)
     findings, degraded = await _run_llm(slug, pr_number, code_files, det_findings)
+
+    # Free memory — unload LLM after scan completes
+    try:
+        from aegis.config import get_settings
+        from aegis.llm.lmstudio_manager import unload_all
+        s = get_settings()
+        if s.lmstudio_swap_models:
+            await unload_all(s.lmstudio_base_url)
+    except Exception:
+        pass
 
     # Sort by severity
     _sev_order = {Severity.CRITICAL: 0, Severity.HIGH: 1, Severity.MEDIUM: 2, Severity.LOW: 3}
