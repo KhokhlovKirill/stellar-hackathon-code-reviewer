@@ -56,7 +56,9 @@ async def github_webhook(
 ):
     """Receive and process GitHub webhook events."""
     body = await request.body()
-    WEBHOOKS_RECEIVED.labels(provider="github", event=x_github_event or "unknown").inc()
+    WEBHOOKS_RECEIVED.labels(
+        provider="github", event_type=x_github_event or "unknown"
+    ).inc()
 
     if x_github_event != "pull_request":
         log.debug("github.webhook.ignored", event=x_github_event)
@@ -163,7 +165,9 @@ async def gitlab_webhook(
 ):
     """Receive and process GitLab webhook events."""
     body = await request.body()
-    WEBHOOKS_RECEIVED.labels(provider="gitlab", event=x_gitlab_event or "unknown").inc()
+    WEBHOOKS_RECEIVED.labels(
+        provider="gitlab", event_type=x_gitlab_event or "unknown"
+    ).inc()
 
     if x_gitlab_event != "Merge Request Hook":
         log.debug("gitlab.webhook.ignored", event=x_gitlab_event)
