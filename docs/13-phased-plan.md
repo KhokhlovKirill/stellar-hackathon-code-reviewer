@@ -115,8 +115,7 @@ FP-rate на негативах ниже baseline; деградированны�
 
 ## Фаза 6 — Рендер, комментарии, политика merge (C4, C5, C8)
 
-- [~] GitHub provider write-ops: inline summary/status/request-changes/reply готовы;
-      GitLab/Bitbucket write-ops остаются
+- [x] Provider write-ops: GitHub/GitLab/Bitbucket inline summary/status/request-changes/reply
 - [ ] `render.py`: inline-комментарий (severity-бейдж, CWE, «почему эксплуатируемо
       здесь», offending-сниппет) с привязкой к строке/position на каждом провайдере (C4)
 - [ ] Suggestion-блоки (one-click apply) + fallback unified-diff патч (C5)

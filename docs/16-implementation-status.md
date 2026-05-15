@@ -8,7 +8,7 @@
 |---|---|---|
 | FastAPI app + health/ready/metrics | Готов базовый runtime | `aegis/api/app.py`, `aegis/obs/*` |
 | Webhook gateway | Реализован security-order: raw body, parse, signature verify, idempotency, enqueue | `aegis/api/webhooks.py` |
-| Провайдеры VCS | Parse webhook + fetch PR/diff/file для GitHub/GitLab/Bitbucket; GitHub write-ops готовы, GitLab/Bitbucket write-ops ещё Phase 6 | `aegis/providers/*` |
+| Провайдеры VCS | Parse webhook + fetch PR/diff/file и write-ops для GitHub/GitLab/Bitbucket | `aegis/providers/*` |
 | Diff parser | Unified diff → FileChange/Hunk/DiffLine/new_lineno/diff_position | `aegis/providers/diffparse.py` |
 | Repo vault | Репозитории, webhook/access secrets, Fernet vault | `aegis/repos.py`, `aegis/vault.py` |
 | Очередь | Redis + Arq-compatible enqueue, stale-head guard | `aegis/queue.py`, `aegis/worker/main.py` |
@@ -34,6 +34,12 @@
   duplicate, bad signature and non-JSON request paths.
 - GitHub provider write-ops implemented: inline comments, summary comments, replies,
   commit status and request-changes review, with payload tests.
+- Risk Score, render and policy pipeline stages implemented: findings now become
+  inline comments, summary comments, status checks and request-changes decisions.
+- Smart Context Window implemented before LLM analysis: changed files only,
+  bounded context windows around hunks.
+- GitLab and Bitbucket write-ops implemented: inline comments, summaries, replies,
+  external/build statuses and request-changes comments.
 
 ## 3. Production-gaps до финальной готовности
 
@@ -41,7 +47,6 @@
 |---|---|---|
 | Smart Context Window + Code RAG ещё не в коде | Без ±50/AST выше FP/FN на multi-file flows | Добавить `pipeline/context.py`, расширить `PipelineState.context_map` |
 | Risk Score / policy / render ещё не реализованы | Без этого нет C4/C5/C8 e2e | Добавить `risk_score.py`, `render.py`, `policy.py` |
-| GitLab/Bitbucket write-ops | GitHub уже может постить inline/status/request-changes; остальные провайдеры пока read-only | Реализовать write-ops по API GitLab Discussions/Approval и Bitbucket comments/tasks |
 | ChatOps | C7 и FP-learning пока только в схеме БД/docs | Добавить `dialog/handler.py`, команды и suppression |
 | Admin Portal | Нет UI/API для подключения репозитория и политики | Реализовать REST auth/repos/scans/settings |
 | Eval harness | Uplift SFT+ORPO модели пока не доказан метриками | Собрать golden fixtures из mythos PrimeVul/CTF-Fixes + негативы |
@@ -57,7 +62,7 @@
 .venv/bin/pytest -q
 ```
 
-Результат: ruff чисто, mypy чисто по 51 source-файлу, pytest — 18 passed.
+Результат: ruff чисто, mypy чисто по 58 source-файлам, pytest — 27 passed.
 
 ## 5. Использование mythos данных
 
