@@ -17,8 +17,8 @@ from aegis.graph.routers import (
 def build_security_graph(checkpointer=None):
     """Construct and compile the security analysis StateGraph.
 
-    Returns a compiled LangGraph that can be invoked with:
-        graph.invoke(initial_state, config={"configurable": {"thread_id": scan_id}})
+    Returns a compiled LangGraph. Agent nodes are async — call ``graph.ainvoke(...)``
+    from asyncio code (see ``aegis.graph.runtime.execute_graph``).
     """
     # Import agents here to avoid circular imports at module load time
     from aegis.graph.agents.planner import planner_agent

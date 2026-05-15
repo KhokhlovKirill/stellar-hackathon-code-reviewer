@@ -68,13 +68,14 @@ async def autofix_agent(state: SecurityGraphState) -> SecurityGraphState:
         # Ask LLM to generate fix
         try:
             fix_prompt = _build_fix_prompt(finding, patch)
-            response, tokens = await call_llm(
-                system=SYSTEM_PROMPT_AUTOFIX,
-                user=fix_prompt,
-                model_hint="primary",
-                pr_id=state.get("pr_id"),
+            result = await call_llm(
+                system_prompt=SYSTEM_PROMPT_AUTOFIX,
+                user_prompt=fix_prompt,
+                agent_name="autofix",
             )
-            fix_code = _extract_fix_code(response)
+            content = result.get("content", "")
+            tokens_used = result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
+            fix_code = _extract_fix_code(content)
             if fix_code:
                 suggestions.append({
                     "file": file_path,
@@ -84,7 +85,7 @@ async def autofix_agent(state: SecurityGraphState) -> SecurityGraphState:
                     "fix": fix_code,
                     "description": finding.get("description", ""),
                     "source": "llm_generated",
-                    "tokens": tokens,
+                    "tokens": tokens_used,
                 })
         except Exception as exc:
             log.warning("autofix.llm_error", finding=finding.get("vuln_type"), error=str(exc))

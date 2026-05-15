@@ -286,11 +286,15 @@ async def github_comment_webhook(
 
     pr = await _get_pr(db, repo.id, pr_number)
 
+    access_token = _decrypt_secret(repo.access_token) if repo.access_token else ""
+
     context = {
         "repo_id": str(repo.id),
         "pr_id": str(pr.id) if pr else None,
         "pr_number": pr_number,
         "repo_full_name": repo_full_name,
+        "provider": "github",
+        "access_token": access_token,
         "user": payload.get("comment", {}).get("user", {}).get("login", ""),
     }
 

@@ -27,8 +27,8 @@ def _get_graph():
 async def execute_graph(initial_state: dict[str, Any]) -> dict[str, Any]:
     """Run a new security analysis graph and return final state.
 
-    Wraps the synchronous LangGraph invoke() in a thread pool so it
-    plays nicely with asyncio.
+    Uses LangGraph ``ainvoke`` because all agent nodes are async coroutines;
+    synchronous ``invoke`` cannot run them.
     """
     graph = _get_graph()
     scan_id: str = initial_state["scan_id"]
@@ -39,9 +39,7 @@ async def execute_graph(initial_state: dict[str, Any]) -> dict[str, Any]:
 
     try:
         result = await asyncio.wait_for(
-            asyncio.get_running_loop().run_in_executor(
-                None, lambda: graph.invoke(initial_state, config=config)
-            ),
+            graph.ainvoke(initial_state, config=config),
             timeout=settings.max_graph_execution_seconds,
         )
         log.info(
@@ -70,8 +68,9 @@ async def resume_graph(scan_id: str, update: dict[str, Any]) -> dict[str, Any]:
     langgraph_resume_total.inc()
 
     try:
-        result = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: graph.invoke(update, config=config)
+        result = await asyncio.wait_for(
+            graph.ainvoke(update, config=config),
+            timeout=settings.max_graph_execution_seconds,
         )
         log.info("graph.resume.done", scan_id=scan_id, status=result.get("status"))
         return result

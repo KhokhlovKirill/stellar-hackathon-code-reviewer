@@ -19,15 +19,18 @@ async def persist_agent(state: SecurityGraphState) -> SecurityGraphState:
         - state["persist_error"]: str | None
     """
     final_findings = state.get("filtered_final_findings") or state.get("final_findings", [])
-    pr_id = state.get("pr_id")
+    pr_id_raw = state.get("pr_id")
     scan_id = state.get("scan_id")
     risk_score = state.get("risk_score", 0)
     risk_label = state.get("risk_label", "green")
     policy_decision = state.get("policy_decision", "pass")
-    autofix_suggestions = state.get("autofix_suggestions", [])
+    autofix_suggestions = state.get("autofix_suggestions", [])  # noqa: F841
     llm_a_tokens = state.get("llm_a_tokens", 0)
     llm_b_tokens = state.get("llm_b_tokens", 0)
     judge_tokens = state.get("judge_tokens", 0)
+
+    # pr_id is serialised to str for arq JSON transport — convert back to int
+    pr_id: int | None = _to_int(pr_id_raw)
 
     log.info("persist.start", pr_id=pr_id, scan_id=scan_id, findings=len(final_findings))
 
@@ -76,33 +79,66 @@ async def persist_agent(state: SecurityGraphState) -> SecurityGraphState:
         return {**state, "persisted": False, "persist_error": str(exc)}
 
 
-async def _upsert_pr(session, pr_id, risk_score, risk_label, policy_decision, finding_count):
-    from sqlalchemy import cast, func, update
-    from sqlalchemy.dialects.postgresql import JSONB
+def _to_int(value: object) -> int | None:
+    """Safely coerce a value to int, returning None if impossible."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
 
+
+async def _upsert_pr(
+    session,
+    pr_id: int | None,
+    risk_score: int,
+    risk_label: str,
+    policy_decision: str,
+    finding_count: int,
+) -> None:
+    """Update the PullRequest row with scan results."""
+    from sqlalchemy import select, update
     from aegis.db.models import PRStatusEnum, PullRequest
 
-    if pr_id:
-        meta_patch = cast({"policy_decision": policy_decision}, JSONB)
-        merged_meta = func.coalesce(PullRequest.analysis_metadata, cast({}, JSONB)).op("||")(
-            meta_patch
+    if not pr_id:
+        return
+
+    # Fetch current metadata so we can merge in Python (avoids JSONB cast ambiguity)
+    result = await session.execute(
+        select(PullRequest.analysis_metadata).where(PullRequest.id == pr_id)
+    )
+    row = result.first()
+    current_meta: dict = dict(row[0] or {}) if row else {}
+    current_meta["policy_decision"] = policy_decision
+
+    pr_status = PRStatusEnum.blocked if policy_decision == "block" else PRStatusEnum.passed
+
+    await session.execute(
+        update(PullRequest)
+        .where(PullRequest.id == pr_id)
+        .values(
+            risk_score=risk_score,
+            risk_label=risk_label,
+            status=pr_status,
+            findings_count=finding_count,
+            analysis_metadata=current_meta,
+            updated_at=datetime.now(timezone.utc),
         )
-        pr_status = PRStatusEnum.blocked if policy_decision == "block" else PRStatusEnum.passed
-        await session.execute(
-            update(PullRequest)
-            .where(PullRequest.id == pr_id)
-            .values(
-                risk_score=risk_score,
-                risk_label=risk_label,
-                status=pr_status,
-                findings_count=finding_count,
-                analysis_metadata=merged_meta,
-                updated_at=datetime.now(timezone.utc),
-            )
-        )
+    )
 
 
-async def _save_findings(session, pr_id, findings: list[dict]):
+_VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+
+
+def _coerce_severity(raw: str | None) -> str:
+    """Map any raw severity string to a valid SeverityEnum value, defaulting to 'info'."""
+    if raw and raw.lower() in _VALID_SEVERITIES:
+        return raw.lower()
+    return "info"
+
+
+async def _save_findings(session, pr_id: int | None, findings: list[dict]) -> None:
     from aegis.db.models import Finding
 
     if not pr_id or not findings:
@@ -115,7 +151,7 @@ async def _save_findings(session, pr_id, findings: list[dict]):
             line_number=f.get("line_number"),
             vuln_type=f.get("vuln_type", ""),
             cwe=f.get("cwe"),
-            severity=f.get("severity", "info"),
+            severity=_coerce_severity(f.get("severity")),
             confidence=f.get("confidence", 0.75),
             description=f.get("description", ""),
             fix_snippet=f.get("fix_snippet") or f.get("fix"),
@@ -126,7 +162,13 @@ async def _save_findings(session, pr_id, findings: list[dict]):
         session.add(finding)
 
 
-async def _save_llm_log(session, pr_id, scan_id, tokens_used, summary):
+async def _save_llm_log(
+    session,
+    pr_id: int | None,
+    scan_id: str | None,
+    tokens_used: int,
+    summary: str,
+) -> None:
     from aegis.db.models import LLMLog
 
     if not pr_id:
@@ -142,15 +184,20 @@ async def _save_llm_log(session, pr_id, scan_id, tokens_used, summary):
     session.add(log_entry)
 
 
-async def _update_graph_execution(session, scan_id, status: str):
+async def _update_graph_execution(session, scan_id: str | None, status: str) -> None:
     from sqlalchemy import update
-    from aegis.db.models import GraphExecution
+    from aegis.db.models import GraphExecution, GraphStatusEnum
 
     if not scan_id:
         return
 
+    try:
+        status_enum = GraphStatusEnum(status)
+    except ValueError:
+        status_enum = GraphStatusEnum.failed
+
     await session.execute(
         update(GraphExecution)
         .where(GraphExecution.scan_id == str(scan_id))
-        .values(status=status, finished_at=datetime.now(timezone.utc))
+        .values(status=status_enum, finished_at=datetime.now(timezone.utc))
     )

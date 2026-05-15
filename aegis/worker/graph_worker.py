@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -14,7 +13,6 @@ log = get_logger(__name__)
 # Must match WorkerSettings.queue_name in aegis.worker.main
 ARQ_QUEUE_NAME = "aegis:queue"
 
-_GRAPH_TIMEOUT_SECONDS = 600  # 10 minutes max per scan
 _REDIS_POOL = None
 
 
@@ -120,6 +118,7 @@ async def run_graph_scan(
             "repo_full_name": repo_full_name,
             "provider": provider,
             "access_token": access_token,
+            "pr_number": pr_number,
             "pr_metadata": {**pr_metadata, "head_sha": head_sha},
             "diff_files": diff_files,
             "full_diff": full_diff,
@@ -151,13 +150,19 @@ async def run_graph_scan(
             "published": False,
         }
 
-        # Execute graph with timeout
+        # Execute graph — execute_graph() manages its own timeout internally
+        # (settings.max_graph_execution_seconds) and returns an error dict on
+        # timeout rather than raising, so we must inspect the result status.
         from aegis.graph.runtime import execute_graph
 
-        result = await asyncio.wait_for(
-            execute_graph(initial_state=initial_state),
-            timeout=_GRAPH_TIMEOUT_SECONDS,
-        )
+        result = await execute_graph(initial_state=initial_state)
+
+        # Detect internal graph errors (timeout, exception caught inside runtime)
+        if result.get("status") == "error":
+            error_msg = result.get("error_message", "Graph execution failed")
+            log.error("worker.graph_internal_error", scan_id=scan_id, error=error_msg)
+            await _update_scan_status(scan_id, "failed", error=error_msg)
+            return {"scan_id": scan_id, "status": "failed", "error": error_msg}
 
         final_risk = result.get("risk_label", "green")
         finding_count = len(result.get("final_findings", []))
@@ -175,11 +180,6 @@ async def run_graph_scan(
             "risk_label": final_risk,
             "findings": finding_count,
         }
-
-    except asyncio.TimeoutError:
-        log.error("worker.timeout", scan_id=scan_id)
-        await _update_scan_status(scan_id, "failed", error="Scan timeout exceeded")
-        return {"scan_id": scan_id, "status": "failed", "error": "timeout"}
 
     except Exception as exc:
         log.error("worker.task_error", scan_id=scan_id, error=str(exc))
