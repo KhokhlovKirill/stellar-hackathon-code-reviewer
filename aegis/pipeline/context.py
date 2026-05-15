@@ -7,7 +7,9 @@ context for the LLM so it can see nearby validation/sanitization code.
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import re
 
 from aegis.config import get_config
 from aegis.obs import get_logger
@@ -41,6 +43,9 @@ async def enrich_context(state: PipelineState) -> None:
         if not text:
             continue
         context = extract_context(fc, text, limit)
+        rag = extract_python_call_context(fc, text)
+        if rag:
+            context = f"{context}\n{rag}" if context else rag
         if context:
             context_map[fc.path] = context
 
@@ -83,3 +88,42 @@ def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
         else:
             merged.append((start, end))
     return merged
+
+
+def extract_python_call_context(fc: FileChange, file_text: str, max_chars: int = 8000) -> str:
+    if fc.language != "python" and not fc.path.endswith(".py"):
+        return ""
+    calls = _added_call_names(fc)
+    if not calls:
+        return ""
+    try:
+        tree = ast.parse(file_text)
+    except SyntaxError:
+        return ""
+    lines = file_text.splitlines()
+    chunks: list[str] = []
+    total = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name not in calls:
+            continue
+        end = getattr(node, "end_lineno", node.lineno)
+        body = "\n".join(
+            f"{lineno}: {lines[lineno - 1]}" for lineno in range(node.lineno, end + 1)
+        )
+        chunk = f"@@ ast-context {fc.path}:{node.name}:{node.lineno}-{end} @@\n{body}"
+        if total + len(chunk) > max_chars:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return "\n".join(chunks)
+
+
+def _added_call_names(fc: FileChange) -> set[str]:
+    calls: set[str] = set()
+    for line in fc.added_lines():
+        for name in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", line.content):
+            if name not in {"if", "for", "while", "with", "return", "print"}:
+                calls.add(name)
+    return calls
