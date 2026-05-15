@@ -155,10 +155,7 @@ async def run_graph_scan(
         from aegis.graph.runtime import execute_graph
 
         result = await asyncio.wait_for(
-            execute_graph(
-                initial_state=initial_state,
-                thread_id=scan_id,
-            ),
+            execute_graph(initial_state=initial_state),
             timeout=_GRAPH_TIMEOUT_SECONDS,
         )
 
