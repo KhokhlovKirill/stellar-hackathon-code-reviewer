@@ -94,7 +94,7 @@ llm:
   per_scan_cost_usd_cap: 0.50
 tiers:
   local-secure: { base_url: http://host.docker.internal:1234/v1, model: don-agent-v3 }
-  local-base:   { base_url: http://host.docker.internal:1234/v1, model: qwen3.6-35b-a3b-4bit-mlx }
+  local-base:   { base_url: http://host.docker.internal:1234/v1, model: qwen3.6-35b-a3b-ud-mlx }
   cloud:        { base_url: https://openrouter.ai/api/v1,
                   generalist_model: ${OPENROUTER_GENERALIST_MODEL},
                   judge_model: ${OPENROUTER_JUDGE_MODEL} }

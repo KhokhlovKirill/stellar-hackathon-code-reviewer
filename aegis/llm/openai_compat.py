@@ -76,7 +76,10 @@ class OpenAICompatibleClient(LLMClient):
                 },
             }
         else:
-            payload["response_format"] = {"type": "json_object"}
+            # LM Studio currently accepts `json_schema` or `text`, not OpenAI's
+            # legacy `json_object`. Local models still receive the schema in the
+            # prompt and are validated by our parser after completion.
+            payload["response_format"] = {"type": "text"}
 
         t0 = time.monotonic()
         try:

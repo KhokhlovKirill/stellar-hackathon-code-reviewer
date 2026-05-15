@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     lmstudio_base_url: str = Field("http://host.docker.internal:1234/v1", alias="LMSTUDIO_BASE_URL")
     lmstudio_secure_model: str = Field("don-agent-v3", alias="LMSTUDIO_SECURE_MODEL")
     lmstudio_base_model: str = Field(
-        "qwen3.6-35b-a3b-4bit-mlx", alias="LMSTUDIO_BASE_MODEL"
+        "qwen3.6-35b-a3b-ud-mlx", alias="LMSTUDIO_BASE_MODEL"
     )
 
     @field_validator("vault_key")
