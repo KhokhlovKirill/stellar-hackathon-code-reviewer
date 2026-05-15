@@ -12,6 +12,7 @@ one large model occupies VRAM at a time.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import httpx
 
@@ -32,13 +33,14 @@ def _root(base_url: str) -> str:
     return base_url.rstrip("/").removesuffix("/v1")
 
 
-async def _get_models(base_url: str) -> list[dict]:
+async def _get_models(base_url: str) -> list[dict[str, Any]]:
     """Return full model list from /api/v0/models."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{_v0_base(base_url)}/models")
         if r.status_code == 200:
-            return r.json().get("data", [])
+            data = r.json().get("data", [])
+            return data if isinstance(data, list) else []
     except Exception as exc:
         log.warning("lmstudio.get_models_error", error=str(exc))
     return []

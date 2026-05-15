@@ -24,13 +24,15 @@ RUN arch="$(dpkg --print-architecture)" \
     && rm /tmp/gitleaks.tar.gz
 
 FROM base AS deps
-COPY pyproject.toml ./
+COPY backend/pyproject.toml ./
 RUN pip install --upgrade pip && pip install "." && pip install semgrep>=1.95
 
 FROM deps AS app
-COPY aegis ./aegis
-COPY alembic ./alembic
-COPY alembic.ini config.example.yaml ./
+ENV AEGIS_FRONTEND_TEMPLATES=/app/frontend/templates
+COPY backend/aegis ./aegis
+COPY backend/alembic ./alembic
+COPY backend/alembic.ini backend/config.example.yaml ./
+COPY frontend ./frontend
 # Vendor Semgrep registry rulesets at build time (offline at runtime).
 RUN semgrep --version && bandit --version && gitleaks version \
     && semgrep --config p/owasp-top-ten --config p/security-audit --config p/secrets \

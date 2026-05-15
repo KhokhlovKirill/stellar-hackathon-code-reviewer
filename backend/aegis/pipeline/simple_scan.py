@@ -1,6 +1,6 @@
 """Pull-mode scanner: fetch public GitHub PR diff → run analysis → return findings.
 
-No webhook, no token, no ngrok required. Works on any public repo.
+No webhook, no token required. Works on any public repo.
 For private repos: pass access_token (optional).
 """
 
@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from aegis.config import get_settings
 from aegis.llm.parser import finding_schema, parse_findings
 from aegis.llm.prompt import judge_messages, review_messages
 from aegis.llm.router import LLMRouter
@@ -148,6 +149,43 @@ def _filter_files(files: list[FileChange]) -> list[FileChange]:
     return out
 
 
+async def _get_local_context_tokens() -> int:
+    """Return loaded context tokens from LM Studio, or a safe default."""
+    try:
+        v0_base = get_settings().lmstudio_base_url.rstrip("/").removesuffix("/v1")
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(f"{v0_base}/api/v0/models")
+        for m in r.json().get("data", []):
+            if m.get("state") == "loaded" and m.get("type") in ("llm", "vlm"):
+                return int(m.get("loaded_context_length", 8192))
+    except Exception as exc:
+        log.warning("simple_scan.context_probe_failed", error=str(exc))
+    return 8192
+
+
+def _trim_files_to_budget(files: list[FileChange], char_budget: int) -> list[FileChange]:
+    """Return as many files as fit within char_budget (rough token proxy: 3 chars/token).
+
+    Size includes formatting overhead from _format_diff (hunk headers, line prefixes).
+    """
+    out: list[FileChange] = []
+    used = 0
+    for f in files:
+        # Match _format_diff: file header + hunk headers + "ADD old=X new=Y: content" per line
+        file_header = len(f"FILE {f.path} language={f.language or 'unknown'} status={f.status}") + 1
+        hunk_text = sum(
+            len(h.header) + 1 +
+            sum(len(f"ADD old= new=: {ln.content}") + 10 for ln in h.lines)
+            for h in f.hunks
+        )
+        size = file_header + hunk_text
+        if used + size > char_budget:
+            break
+        out.append(f)
+        used += size
+    return out or files[:1]  # always send at least 1 file
+
+
 async def _run_llm(
     slug: str, pr_number: int, files: list[FileChange], det_findings: list[Finding]
 ) -> tuple[list[Finding], bool]:
@@ -158,10 +196,24 @@ async def _run_llm(
     router = LLMRouter()
     schema = finding_schema()
 
+    # Limit diff to local model's loaded context (reserve 4096 for response + ~500 system/meta)
+    # Empirical: Qwen tokenizer ~2 chars/token for mixed code content (conservative)
+    ctx_tokens = await _get_local_context_tokens()
+    available_tokens = max(ctx_tokens - 4096 - 500, 2048)
+    char_budget = int(available_tokens * 2.0)
+    trimmed_files = _trim_files_to_budget(files, char_budget)
+    if len(trimmed_files) < len(files):
+        log.info(
+            "simple_scan.diff_trimmed",
+            total=len(files),
+            sent=len(trimmed_files),
+            ctx_tokens=ctx_tokens,
+        )
+
     messages = review_messages(
         repo=slug,
         pr_id=str(pr_number),
-        files=files,
+        files=trimmed_files,
         deterministic_findings=det_findings,
         context_map={},
     )
@@ -193,7 +245,7 @@ async def _run_llm(
             j_messages = judge_messages(
                 repo=slug,
                 pr_id=str(pr_number),
-                files=files,
+                files=trimmed_files,
                 candidates=all_candidates,
                 context_map={},
             )
@@ -270,13 +322,12 @@ async def run_simple_scan(url: str, token: str | None = None) -> SimpleScanResul
 
     # Free memory — unload LLM after scan completes
     try:
-        from aegis.config import get_settings
         from aegis.llm.lmstudio_manager import unload_all
         s = get_settings()
         if s.lmstudio_swap_models:
             await unload_all(s.lmstudio_base_url)
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("simple_scan.unload_failed", error=str(exc))
 
     # Sort by severity
     _sev_order = {Severity.CRITICAL: 0, Severity.HIGH: 1, Severity.MEDIUM: 2, Severity.LOW: 3}

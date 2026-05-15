@@ -22,6 +22,7 @@ import argparse
 import json
 import random
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_OUT = ROOT / "golden" / "full.jsonl"
@@ -31,7 +32,7 @@ DEFAULT_OUT = ROOT / "golden" / "full.jsonl"
 # expected: list of {cwe, line} — 1-indexed relative to added_lines
 # ---------------------------------------------------------------------------
 
-CASES: list[dict] = []
+CASES: list[dict[str, Any]] = []
 
 
 def _add(
@@ -39,7 +40,7 @@ def _add(
     path: str,
     language: str,
     lines: list[str],
-    expected: list[dict],
+    expected: list[dict[str, Any]],
 ) -> None:
     CASES.append({
         "id": id,
@@ -331,7 +332,7 @@ _add("clean_parameterized_go", "handlers/user.go", "go",
      [])
 
 
-def stats(cases: list[dict]) -> dict:
+def stats(cases: list[dict[str, Any]]) -> dict[str, Any]:
     vuln = [c for c in cases if c["expected"]]
     clean = [c for c in cases if not c["expected"]]
     cwes: dict[str, int] = {}

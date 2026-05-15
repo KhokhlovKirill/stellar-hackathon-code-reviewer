@@ -1,39 +1,31 @@
-.PHONY: help install lint type test check fmt up down logs migrate eval smoke
+.PHONY: help backend-install backend-check backend-test backend-lint backend-type docker-build docker-up docker-down docker-logs
 
 help:
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "\033[36m%-12s\033[0m %s\n",$$1,$$2}'
+	@printf "%s\n" "Targets: backend-install backend-check backend-test backend-lint backend-type docker-build docker-up docker-down docker-logs"
 
-install: ## Create venv and install deps (dev)
-	python3 -m venv .venv && . .venv/bin/activate && pip install -U pip && pip install -e ".[dev]"
+backend-install:
+	cd backend && $(MAKE) install
 
-fmt: ## Auto-format / fix
-	. .venv/bin/activate && ruff check --fix . && ruff format .
+backend-check:
+	cd backend && $(MAKE) check
 
-lint: ## Lint
-	. .venv/bin/activate && ruff check .
+backend-test:
+	cd backend && $(MAKE) test
 
-type: ## Type-check
-	. .venv/bin/activate && mypy aegis
+backend-lint:
+	cd backend && $(MAKE) lint
 
-test: ## Unit + integration tests
-	. .venv/bin/activate && pytest -q
+backend-type:
+	cd backend && $(MAKE) type
 
-check: lint type test ## All gates (CI parity)
+docker-build:
+	docker compose -f backend/deploy/docker-compose.yml build
 
-smoke: ## Import + syntax smoke (no deps required)
-	python3 -m compileall -q aegis alembic && echo "compile OK"
+docker-up:
+	docker compose -f backend/deploy/docker-compose.yml up -d
 
-up: ## Bring the stack up
-	cd deploy && docker compose up -d --build
+docker-down:
+	docker compose -f backend/deploy/docker-compose.yml down
 
-down: ## Tear the stack down
-	cd deploy && docker compose down
-
-logs: ## Tail service logs
-	cd deploy && docker compose logs -f api worker
-
-migrate: ## Apply DB migrations
-	. .venv/bin/activate && alembic upgrade head
-
-eval: ## Run the golden-set eval harness (Phase 10)
-	. .venv/bin/activate && python -m eval.run
+docker-logs:
+	docker compose -f backend/deploy/docker-compose.yml logs -f api worker

@@ -67,9 +67,12 @@ async def webhook_secret(provider: Provider, repo_external_id: str) -> str:
 async def resolve(provider: Provider, repo_external_id: str, slug: str) -> RepoContext:
     cfg = get_config().policy
     async with get_session() as s:
+        from sqlalchemy.orm import selectinload
         repo = (
             await s.execute(
-                select(Repository).where(
+                select(Repository)
+                .options(selectinload(Repository.policy))
+                .where(
                     Repository.provider == provider.value,
                     Repository.external_id == repo_external_id,
                 )

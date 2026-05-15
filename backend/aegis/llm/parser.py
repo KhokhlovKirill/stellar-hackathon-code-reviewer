@@ -126,8 +126,8 @@ def parse_findings(
     content: str,
     *,
     source: FindingSource,
-    changed_lines: dict[str, set[int]],
-    diff_positions: dict[tuple[str, int], int | None],
+    changed_lines: dict[str, set[int]] | None = None,
+    diff_positions: dict[tuple[str, int], int | None] | None = None,
 ) -> list[Finding]:
     raw = _json_object(content)
     # Normalise each finding (handles don-agent-v3 native schema)
@@ -139,12 +139,13 @@ def parse_findings(
 
     out: list[Finding] = []
     for f in env.findings:
-        if f.line not in changed_lines.get(f.file, set()):
+        # When changed_lines is provided (webhook pipeline), filter to diff lines only
+        if changed_lines is not None and f.line not in changed_lines.get(f.file, set()):
             continue
         out.append(Finding(
             file=f.file,
             line=f.line,
-            diff_position=diff_positions.get((f.file, f.line)),
+            diff_position=diff_positions.get((f.file, f.line)) if diff_positions else None,
             cwe=f.cwe,
             rule_id=f"llm:{source.value}",
             severity=f.severity,

@@ -26,6 +26,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 os.environ.setdefault("AEGIS_DATABASE_URL", "postgresql+asyncpg://x:x@localhost/x")
 os.environ.setdefault("AEGIS_REDIS_URL", "redis://localhost:6379/0")
@@ -62,7 +63,7 @@ def _file_exists(*parts: str) -> bool:
 _SECRET_CWES = {"CWE-798", "CWE-321", "CWE-259", "CWE-312"}
 
 
-def _run_detection_eval(golden_path: Path) -> dict:
+def _run_detection_eval(golden_path: Path) -> dict[str, Any]:
     """Evaluate secrets detection offline; report coverage for other CWEs separately.
 
     Only CWE-798/321/259/312 can be tested without Semgrep/Bandit installed.
@@ -118,8 +119,8 @@ def _run_detection_eval(golden_path: Path) -> dict:
     }
 
 
-def evaluate(golden_path: Path | None = None) -> dict:
-    results: dict[str, dict] = {}
+def evaluate(golden_path: Path | None = None) -> dict[str, Any]:
+    results: dict[str, dict[str, Any]] = {}
 
     # C1 — webhook reception
     c1_ok = all(

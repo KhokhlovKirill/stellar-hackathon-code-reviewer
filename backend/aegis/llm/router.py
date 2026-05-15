@@ -6,6 +6,11 @@ Local-swap mode (LMSTUDIO_SWAP_MODELS=true):
     detector_a  → LMSTUDIO_GENERALIST_MODEL  (qwen3.6-35b, large reasoning model)
     detector_b  → LMSTUDIO_SECURE_MODEL      (don-agent-v3, infosec specialist)
     judge       → LMSTUDIO_JUDGE_MODEL       (defaults to generalist model)
+
+Cloud tiers (LMSTUDIO_SWAP_MODELS=false):
+    detector_a  → cloud-generalist (DeepSeek V4 Flash free)  → cloud-mimo  → local-secure
+    detector_b  → cloud-mimo (MiMo-V2-Flash)  → cloud-generalist  → local-secure
+    judge       → cloud-judge (Qwen3 Coder free)  → cloud-generalist  → local-secure
 """
 
 from __future__ import annotations
@@ -76,6 +81,14 @@ class LLMRouter:
                 strict_schema=False,
                 extra_headers={"HTTP-Referer": "https://aegis.local", "X-Title": "Aegis"},
             ),
+            "cloud-mimo": OpenAICompatibleClient(
+                tier="cloud-mimo",
+                base_url=s.openrouter_base_url,
+                model=s.openrouter_mimo_model,
+                api_key=s.openrouter_api_key,
+                strict_schema=False,
+                extra_headers={"HTTP-Referer": "https://aegis.local", "X-Title": "Aegis"},
+            ),
         }
 
     async def _healthy(self, client: LLMClient) -> bool:
@@ -90,22 +103,22 @@ class LLMRouter:
 
     def _fallback_order(self, role: str) -> list[str]:
         if self._swap_enabled():
-            # Local-only sequential mode — no cloud fallback
+            # Local-first with cloud fallback when local models hit context limits
             if role == "detector_a":
-                return ["local-generalist", "local-base"]
+                return ["local-generalist", "local-base", "cloud-generalist"]
             if role == "detector_b":
-                return ["local-secure", "local-generalist"]
+                return ["local-secure", "local-generalist", "cloud-generalist"]
             if role == "judge":
-                return ["local-judge", "local-generalist"]
+                return ["local-judge", "local-generalist", "cloud-judge"]
             raise ValueError(f"unknown llm role: {role}")
 
-        # Default: primary from config + multi-tier cloud/local fallback
+        # Cloud-first; don-agent-v3 (local-secure) is last-resort fallback only
         if role == "detector_a":
-            return [self.cfg.detector_a, "cloud-generalist", "local-generalist", "local-base"]
+            return ["cloud-generalist", "cloud-mimo", "local-secure"]
         if role == "detector_b":
-            return [self.cfg.detector_b, "local-base", "cloud-generalist", "local-secure"]
+            return ["cloud-mimo", "cloud-generalist", "local-secure"]
         if role == "judge":
-            return [self.cfg.judge, "cloud-judge", "local-judge", "cloud-generalist"]
+            return ["cloud-judge", "cloud-generalist", "local-secure"]
         raise ValueError(f"unknown llm role: {role}")
 
     def _model_for_tier(self, tier: str) -> str | None:

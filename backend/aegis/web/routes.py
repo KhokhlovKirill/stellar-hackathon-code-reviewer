@@ -6,6 +6,7 @@ redirect (POST-redirect-GET). Every page except auth requires a logged-in user.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -39,7 +40,17 @@ from aegis.vault import encrypt
 
 log = get_logger("aegis.web")
 router = APIRouter(tags=["web"])
-templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+def _templates_dir() -> Path:
+    configured = Path(os.environ.get("AEGIS_FRONTEND_TEMPLATES", "../frontend/templates"))
+    if configured.is_absolute():
+        return configured
+    backend_root = Path(__file__).resolve().parents[2]
+    return (backend_root / configured).resolve()
+
+
+templates = Jinja2Templates(directory=str(_templates_dir()))
 
 # Dependency singletons (avoids B008; mirrors aegis.api.auth style).
 _user_web = Depends(require_user_web)

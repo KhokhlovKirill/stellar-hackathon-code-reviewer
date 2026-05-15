@@ -23,11 +23,19 @@ from aegis.errors import ConfigError
 class Settings(BaseSettings):
     """Secrets and environment. Never logged, never written to YAML."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=True)
+    model_config = SettingsConfigDict(
+        env_file=("../.env", ".env"),
+        extra="ignore",
+        case_sensitive=True,
+    )
 
     env: Literal["dev", "prod"] = Field("dev", alias="AEGIS_ENV")
     config_file: str = Field("config.yaml", alias="AEGIS_CONFIG_FILE")
     log_level: str = Field("INFO", alias="AEGIS_LOG_LEVEL")
+    frontend_templates_dir: str = Field(
+        "../frontend/templates",
+        alias="AEGIS_FRONTEND_TEMPLATES",
+    )
 
     database_url: str = Field(..., alias="AEGIS_DATABASE_URL")
     redis_url: str = Field(..., alias="AEGIS_REDIS_URL")
@@ -48,6 +56,9 @@ class Settings(BaseSettings):
     )
     openrouter_judge_model: str = Field(
         "anthropic/claude-3.7-sonnet", alias="OPENROUTER_JUDGE_MODEL"
+    )
+    openrouter_mimo_model: str = Field(
+        "xiaomi/mimo-v2-flash", alias="OPENROUTER_MIMO_MODEL"
     )
 
     lmstudio_base_url: str = Field("http://host.docker.internal:1234/v1", alias="LMSTUDIO_BASE_URL")
