@@ -18,6 +18,32 @@ _JS_IMPORT_RE = re.compile(
 )
 
 
+def extract_imports(patch: str, lang: str) -> list[str]:
+    """Extract import statements from a single file's diff patch.
+
+    Args:
+        patch: raw unified-diff patch string (may contain +/- markers).
+        lang: "python" or "js".
+
+    Returns:
+        Deduplicated list of imported module/path names.
+    """
+    added_lines = "\n".join(
+        line[1:] for line in patch.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    )
+    imports: list[str] = []
+    if lang == "python":
+        for m in _PY_IMPORT_RE.finditer(added_lines):
+            module = m.group(1) or m.group(2)
+            if module:
+                imports.append(module)
+    elif lang == "js":
+        for m in _JS_IMPORT_RE.finditer(added_lines):
+            imports.append(m.group(1))
+    return list(set(imports))
+
+
 def resolve_imports(files: list[dict[str, Any]]) -> dict[str, list[str]]:
     """Extract import statements from all changed files.
 

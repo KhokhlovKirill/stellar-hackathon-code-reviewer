@@ -90,9 +90,20 @@ async def context_agent(state: SecurityGraphState) -> SecurityGraphState:
     }
 
 
+def _strip_diff_markers(patch: str) -> str:
+    """Return only the added lines from a unified-diff patch, with the leading '+' removed."""
+    return "\n".join(
+        line[1:] for line in patch.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    )
+
+
 async def _parse_python(filename: str, patch: str) -> tuple[str, dict] | None:
     try:
-        data = parse_python_ast(patch)
+        source = _strip_diff_markers(patch)
+        if not source.strip():
+            return None
+        data = parse_python_ast(source)
         return filename, data
     except Exception as exc:
         log.debug("context.python_ast_fail", filename=filename, error=str(exc))
@@ -101,7 +112,10 @@ async def _parse_python(filename: str, patch: str) -> tuple[str, dict] | None:
 
 async def _parse_js(filename: str, patch: str) -> tuple[str, dict] | None:
     try:
-        data = parse_js_ast(patch)
+        source = _strip_diff_markers(patch)
+        if not source.strip():
+            return None
+        data = parse_js_ast(source)
         return filename, data
     except Exception as exc:
         log.debug("context.js_ast_fail", filename=filename, error=str(exc))
