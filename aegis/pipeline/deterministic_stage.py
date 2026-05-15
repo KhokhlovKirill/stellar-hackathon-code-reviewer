@@ -14,6 +14,8 @@ from sqlalchemy import select
 from aegis.db import get_session
 from aegis.db.models import FindingRow, Scan
 from aegis.obs import get_logger, metrics
+from aegis.pipeline.deterministic.bandit import run_bandit
+from aegis.pipeline.deterministic.gitleaks import run_gitleaks
 from aegis.pipeline.deterministic.sca import run_sca
 from aegis.pipeline.deterministic.secrets import scan_secrets
 from aegis.pipeline.deterministic.semgrep import run_semgrep
@@ -48,7 +50,16 @@ async def run_deterministic(state: PipelineState) -> None:
     sec = scan_secrets(code)
     findings.extend(sec)
 
-    # 2. Semgrep — needs full content of the changed files (never whole repo).
+    # 2. Gitleaks — external high-precision scanner over added lines only.
+    try:
+        gl = await run_gitleaks(code)
+        findings.extend(gl)
+    except FileNotFoundError:
+        state.result.degraded.append("gitleaks")
+        log.warning("deterministic.gitleaks_missing")
+        gl = []
+
+    # 3. Semgrep/Bandit — need full content of the changed files (never whole repo).
     file_texts: dict[str, str] = {}
     provider = get_provider(state.ev.provider)
     if code and state.ctx.access_token:
@@ -74,7 +85,15 @@ async def run_deterministic(state: PipelineState) -> None:
         log.warning("deterministic.semgrep_missing")
         sg = []
 
-    # 3. SCA — changed dependency manifests.
+    try:
+        bd = await run_bandit(file_texts, changed_map)
+        findings.extend(bd)
+    except FileNotFoundError:
+        state.result.degraded.append("bandit")
+        log.warning("deterministic.bandit_missing")
+        bd = []
+
+    # 4. SCA — changed dependency manifests.
     sca = await run_sca(state.manifest_files)
     findings.extend(sca)
 
@@ -87,5 +106,6 @@ async def run_deterministic(state: PipelineState) -> None:
 
     log.info(
         "deterministic.done", scan_id=state.scan_id,
-        secrets=len(sec), semgrep=len(sg), sca=len(sca), total=len(findings),
+        secrets=len(sec), gitleaks=len(gl), semgrep=len(sg), bandit=len(bd),
+        sca=len(sca), total=len(findings),
     )
