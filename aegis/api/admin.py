@@ -392,6 +392,11 @@ async def trigger_retro_scan(
     """Trigger a retro scan of historical PRs."""
     from aegis.graph.subgraphs.retro_scan import run_retro_scan
 
+    try:
+        int(repo_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="repo_id must be a numeric repository id") from exc
+
     summary = await run_retro_scan(repo_id=repo_id, days_back=days_back, limit=limit)
     return {"status": "initiated", "repo_id": repo_id, **summary}
 

@@ -100,16 +100,14 @@ class ChatState(TypedDict):
 
 
 class RetroScanState(TypedDict):
-    """State for the retro full-repo scan subgraph."""
+    """State for re-scanning historical PR rows already stored in PostgreSQL."""
 
-    scan_id: str
-    repo_slug: str
-    provider: str
     repo_db_id: int
-    all_files: list[str]
-    batches: list[list[str]]
-    current_batch: int
-    batch_findings: list[dict[str, Any]]
-    aggregated_findings: list[dict[str, Any]]
-    report_markdown: str | None
-    status: str
+    days_back: int
+    limit: int
+    pr_list: list[dict[str, Any]]
+    total: int
+    queued_jobs: list[str]
+    queued_count: int
+    summary: dict[str, Any]
+    error: str | None
