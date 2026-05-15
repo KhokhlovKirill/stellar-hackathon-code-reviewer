@@ -69,6 +69,13 @@ def create_app() -> FastAPI:
     except ImportError:
         log.warning("webhooks_router_unavailable", phase="will be added in Phase 1")
 
+    try:
+        from aegis.api.admin import router as admin_router
+
+        app.include_router(admin_router)
+    except ImportError:
+        log.warning("admin_router_unavailable", phase="will be added in Phase 8")
+
     return app
 
 
