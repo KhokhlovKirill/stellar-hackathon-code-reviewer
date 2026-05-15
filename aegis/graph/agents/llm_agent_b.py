@@ -40,20 +40,20 @@ async def llm_agent_b(state: SecurityGraphState) -> SecurityGraphState:
 
     prompt = build_security_review_prompt(
         diff=diff_text,
-        pr_title=pr_metadata.get("title", ""),
-        pr_description=pr_metadata.get("description", ""),
+        context_map={},
         ast_context=ast_context,
-        rag_context=rag_context,
-        existing_findings=all_prior,
-        agent="b",
+        det_findings=all_prior,
+        similar_findings=rag_context,
+        repo_context=pr_metadata,
     )
 
-    response_text, tokens = await call_llm(
-        system=SYSTEM_PROMPT_LLM_B,
-        user=prompt,
-        model_hint="secondary",
-        pr_id=state.get("pr_id"),
+    result = await call_llm(
+        system_prompt=SYSTEM_PROMPT_LLM_B,
+        user_prompt=prompt,
+        agent_name="llm_b",
     )
+    response_text = result["content"]
+    tokens = result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
 
     findings, requires_human = parse_llm_b_findings(response_text)
 

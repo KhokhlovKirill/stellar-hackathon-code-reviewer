@@ -11,7 +11,7 @@ from aegis.pipeline.deterministic.semgrep import run_semgrep
 from aegis.pipeline.deterministic.bandit import run_bandit
 from aegis.pipeline.deterministic.gitleaks import run_gitleaks
 from aegis.pipeline.deterministic.sca import run_sca
-from aegis.pipeline.deterministic.entropy import run_entropy
+from aegis.pipeline.deterministic.entropy import run_entropy_scan
 
 log = get_logger(__name__)
 
@@ -38,8 +38,8 @@ async def deterministic_agent(state: SecurityGraphState) -> SecurityGraphState:
     # Run all scanners concurrently
     semgrep_task = asyncio.create_task(_run_scanner("semgrep", run_semgrep, file_patches))
     bandit_task = asyncio.create_task(_run_scanner("bandit", run_bandit, file_patches))
-    gitleaks_task = asyncio.create_task(_run_scanner("gitleaks", run_gitleaks, full_diff=full_diff))
-    entropy_task = asyncio.create_task(_run_scanner("entropy", run_entropy, full_diff=full_diff))
+    gitleaks_task = asyncio.create_task(_run_scanner("gitleaks", run_gitleaks, file_patches))
+    entropy_task = asyncio.create_task(_run_scanner("entropy", run_entropy_scan, file_patches))
     sca_task = asyncio.create_task(_run_scanner("sca", run_sca, file_patches))
 
     results = await asyncio.gather(

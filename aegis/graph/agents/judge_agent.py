@@ -36,19 +36,22 @@ async def judge_agent(state: SecurityGraphState) -> SecurityGraphState:
     # Build combined findings for judge
     all_findings = deterministic_findings + llm_a_findings + llm_b_findings
 
+    diff_text = state.get("full_diff", "")
+
     prompt = build_judge_prompt(
+        diff=diff_text,
         llm_a_findings=llm_a_findings,
         llm_b_findings=llm_b_findings,
-        deterministic_findings=deterministic_findings,
-        pr_metadata=pr_metadata,
+        det_findings=deterministic_findings,
     )
 
-    response_text, tokens = await call_llm(
-        system=SYSTEM_PROMPT_JUDGE,
-        user=prompt,
-        model_hint="primary",
-        pr_id=state.get("pr_id"),
+    result = await call_llm(
+        system_prompt=SYSTEM_PROMPT_JUDGE,
+        user_prompt=prompt,
+        agent_name="judge",
     )
+    response_text = result["content"]
+    tokens = result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
 
     final_findings, risk_score, risk_label, requires_human = parse_judge_findings(response_text)
 
