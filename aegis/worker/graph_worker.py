@@ -205,9 +205,28 @@ async def _fetch_pr_data(
 
     vcs = get_provider(provider, access_token, repo_full_name)
 
-    # Fetch diff files
-    diff_files = await vcs.get_pr_files(repo=repo_full_name, pr_number=pr_number)
-    full_diff = await vcs.get_pr_diff(repo=repo_full_name, pr_number=pr_number)
+    # Fetch diff via BaseProvider.fetch_diff (one round-trip; serialise for LangGraph state)
+    async with vcs:
+        if pr_number is None:
+            diff_objs = []
+        else:
+            diff_objs = await vcs.fetch_diff(pr_number)
+
+    diff_files = [
+        {
+            "filename": f.filename,
+            "status": f.status,
+            "patch": f.patch,
+            "additions": f.additions,
+            "deletions": f.deletions,
+            "raw_url": f.raw_url,
+            "blob_url": f.blob_url,
+            "sha": f.sha,
+            "language": f.language,
+        }
+        for f in diff_objs
+    ]
+    full_diff = "\n".join(f.patch for f in diff_objs if f.patch)
 
     # Load repo settings from DB
     repo_settings = {}
