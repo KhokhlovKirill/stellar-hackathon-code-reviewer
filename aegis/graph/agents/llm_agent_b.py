@@ -75,7 +75,7 @@ def _build_diff(filtered_files: list[dict]) -> str:
         patch = f.get("patch", "")
         chunk = f"--- {filename}\n{patch}\n"
         if total_chars + len(chunk) > _MAX_DIFF_CHARS:
-            parts.append(f"--- {filename}\n[TRUNCATED]\n")
+            parts.append(f"--- {filename}\n[ОБРЕЗАНО]\n")
             break
         parts.append(chunk)
         total_chars += len(chunk)

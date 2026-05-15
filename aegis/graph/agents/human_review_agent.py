@@ -14,7 +14,7 @@ async def human_review_agent(state: SecurityGraphState) -> SecurityGraphState:
     This node is an INTERRUPT point in the LangGraph. When the graph reaches this
     node for a critical finding, it will:
     1. Record the interrupt in the database
-    2. Post a "Pending Human Review" comment to the PR
+    2. При необходимости — уведомление в PR о ожидании человека (зависит от рантайма)
     3. Suspend execution (the graph checkpointer saves state)
 
     The graph is resumed via the /api/human-review/{scan_id} endpoint.

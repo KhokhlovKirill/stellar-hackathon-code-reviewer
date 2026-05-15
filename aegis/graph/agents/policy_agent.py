@@ -56,11 +56,14 @@ async def policy_agent(state: SecurityGraphState) -> SecurityGraphState:
         # Check if finding triggers block
         sev_level = severity_order.get(severity, 0)
         if sev_level >= block_threshold:
-            reasons.append(f"{severity.upper()} finding: {finding.get('vuln_type', 'unknown')} in {finding.get('file_path', '')}")
+            reasons.append(
+                f"Находка уровня {severity.upper()}: {finding.get('vuln_type', 'неизвестно')} "
+                f"в файле {finding.get('file_path', '')}"
+            )
 
     # Secrets always block
     if has_secret:
-        reasons.insert(0, "Hardcoded secret or high-entropy string detected")
+        reasons.insert(0, "Обнаружен захардкоженный секрет или строка с высокой энтропией")
 
     # Human decision overrides
     if human_decision == "approve":
@@ -68,11 +71,11 @@ async def policy_agent(state: SecurityGraphState) -> SecurityGraphState:
         return {
             **state,
             "policy_decision": "pass",
-            "policy_reasons": ["Human reviewer approved"],
+            "policy_reasons": ["Решение ревьюера: одобрено"],
             "filtered_final_findings": filtered_findings,
         }
     elif human_decision == "reject":
-        reasons.insert(0, "Human reviewer rejected this PR")
+        reasons.insert(0, "Решение ревьюера: PR отклонён")
 
     # Determine final decision
     if reasons or has_secret:

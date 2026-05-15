@@ -165,5 +165,5 @@ def _suggest_fix(vuln: dict) -> str | None:
             for evt in events:
                 fixed = evt.get("fixed")
                 if fixed:
-                    return f"Upgrade to >= {fixed}"
+                    return f"Обновить до версии >= {fixed}"
     return None

@@ -42,7 +42,7 @@ async def format_response_node(state: ChatState) -> ChatState:
     response = state.get("response", "")
     command = state.get("command", "")
 
-    formatted = f"**@secbot** › `{command}`\n\n{response}"
+    formatted = f"**@secbot** · команда `{command}`\n\n{response}"
 
     return {**state, "formatted_response": formatted}
 

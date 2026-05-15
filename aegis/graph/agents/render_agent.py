@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from aegis.graph.state import SecurityGraphState
 from aegis.observability.logging import get_logger
 
@@ -19,6 +21,20 @@ _SEVERITY_EMOJI = {
     "red": "🔴",
 }
 
+_SEVERITY_RU = {
+    "critical": "Критический",
+    "high": "Высокий",
+    "medium": "Средний",
+    "low": "Низкий",
+    "info": "Инфо",
+}
+
+_POLICY_BADGE_RU = {
+    "block": "Блокировка",
+    "warn": "Предупреждение",
+    "pass": "Ок",
+}
+
 # shields.io named colors that render as proper badge colors.
 _BADGE_COLORS = {
     "critical": "critical",
@@ -30,6 +46,11 @@ _BADGE_COLORS = {
     "yellow": "yellow",
     "red": "critical",
 }
+
+
+def _shield_badge(label: str, message: str, color: str) -> str:
+    """shields.io badge with URL-encoded UTF-8 label/message."""
+    return f"https://img.shields.io/badge/{quote(label)}-{quote(str(message))}-{color}"
 
 
 async def render_agent(state: SecurityGraphState) -> SecurityGraphState:
@@ -98,68 +119,74 @@ def _render_main_comment(
 ) -> str:
     emoji = _SEVERITY_EMOJI.get(risk_label, "⚪")
     badge_color = _BADGE_COLORS.get(risk_label, "informational")
+    policy_ru = _POLICY_BADGE_RU.get(policy_decision, policy_decision)
+    policy_color = {"block": "critical", "warn": "yellow", "pass": "success"}.get(
+        policy_decision, "success"
+    )
 
     lines = [
-        f"## {emoji} Aegis Security Review",
+        f"## {emoji} Обзор безопасности Aegis",
         "",
-        f"![Risk Score](https://img.shields.io/badge/Risk%20Score-{risk_score}-{badge_color})",
-        f"![Status](https://img.shields.io/badge/Status-{policy_decision.upper()}-{'critical' if policy_decision == 'block' else 'success'})",
+        f"![Оценка риска]({_shield_badge('Оценка риска', str(risk_score), badge_color)})",
+        f"![Решение политики]({_shield_badge('Решение политики', policy_ru, policy_color)})",
         "",
     ]
 
     if summary:
-        lines += ["### Summary", "", summary, ""]
+        lines += ["### Резюме", "", summary, ""]
 
     # Risk breakdown
-    lines += ["### Risk Breakdown", ""]
-    lines.append("| Severity | Count |")
-    lines.append("|----------|-------|")
+    lines += ["### Распределение по серьёзности", ""]
+    lines.append("| Серьёзность | Количество |")
+    lines.append("|-------------|--------------|")
     for sev in ("critical", "high", "medium", "low", "info"):
         count = risk_breakdown.get(sev, 0)
         if count > 0:
             sev_emoji = _SEVERITY_EMOJI.get(sev, "⚪")
-            lines.append(f"| {sev_emoji} {sev.capitalize()} | {count} |")
+            sev_ru = _SEVERITY_RU.get(sev, sev)
+            lines.append(f"| {sev_emoji} {sev_ru} | {count} |")
     lines.append("")
 
     # Findings
     if findings:
-        lines += ["### Findings", ""]
+        lines += ["### Находки", ""]
         for i, finding in enumerate(findings[:20], 1):  # limit display
             sev = finding.get("severity", "info")
             sev_emoji = _SEVERITY_EMOJI.get(sev, "⚪")
+            sev_ru = _SEVERITY_RU.get(sev, sev.upper())
             file_path = finding.get("file_path", "")
             line_no = finding.get("line_number", "?")
-            vuln_type = finding.get("vuln_type", "Unknown")
+            vuln_type = finding.get("vuln_type", "Неизвестно")
             cwe = finding.get("cwe", "")
             desc = finding.get("description", "")
 
-            lines.append(f"#### {i}. {sev_emoji} [{sev.upper()}] {vuln_type}")
-            lines.append(f"- **File**: `{file_path}` (line {line_no})")
+            lines.append(f"#### {i}. {sev_emoji} [{sev_ru}] {vuln_type}")
+            lines.append(f"- **Файл**: `{file_path}` (строка {line_no})")
             if cwe:
                 lines.append(f"- **CWE**: [{cwe}](https://cwe.mitre.org/data/definitions/{cwe.replace('CWE-', '')}.html)")
-            lines.append(f"- **Description**: {desc}")
+            lines.append(f"- **Описание**: {desc}")
 
             # Check for autofix
             fix = next((s for s in autofix_suggestions if s.get("file") == file_path), None)
             if fix:
-                lines.append(f"- **Fix available** ✨")
-                lines.append(f"```suggestion")
+                lines.append("- **Доступно исправление** ✨")
+                lines.append("```suggestion")
                 lines.append(fix.get("fix", ""))
                 lines.append("```")
 
             lines.append("")
 
         if len(findings) > 20:
-            lines.append(f"_...and {len(findings) - 20} more findings. See full report._")
+            lines.append(f"_…и ещё {len(findings) - 20} находок. Полный список — в БД или через `@secbot findings`._")
             lines.append("")
 
     # Blast radius
     affected_count = blast_radius.get("affected_count", 0)
     if affected_count > 0:
         lines += [
-            "### Blast Radius",
+            "### Зона влияния (blast radius)",
             "",
-            f"**{affected_count} files** potentially affected by the vulnerabilities found.",
+            f"**{affected_count} файлов** потенциально затронуты обнаруженными уязвимостями.",
             "",
         ]
 
@@ -167,9 +194,9 @@ def _render_main_comment(
     if policy_decision == "block":
         lines += [
             "---",
-            "### ❌ PR Blocked",
+            "### ❌ Слияние PR заблокировано",
             "",
-            "This PR cannot be merged until the following issues are resolved:",
+            "Этот PR нельзя слить, пока не устранены следующие проблемы:",
         ]
         for reason in policy_reasons[:5]:
             lines.append(f"- {reason}")
@@ -177,9 +204,9 @@ def _render_main_comment(
     elif policy_decision == "warn":
         lines += [
             "---",
-            "### ⚠️ PR Warnings",
+            "### ⚠️ Предупреждения по PR",
             "",
-            "The following issues were found but do not block merge:",
+            "Обнаружены следующие проблемы; слияние не блокируется:",
         ]
         for reason in policy_reasons[:5]:
             lines.append(f"- {reason}")
@@ -188,7 +215,7 @@ def _render_main_comment(
     # Footer
     lines += [
         "---",
-        f"_Scan ID: `{scan_id}` | Powered by [Aegis DevSecOps](https://github.com/aegis) | `/secbot help` for commands_",
+        f"_ID скана: `{scan_id}` | Aegis DevSecOps | команды: `@secbot help`_",
     ]
 
     return "\n".join(lines)
@@ -218,7 +245,7 @@ def _render_inline_comments(findings: list[dict], autofix_suggestions: list[dict
         if cwe:
             body_parts.append(f"**{cwe}**")
         if fix:
-            body_parts.append(f"\n**Suggested fix:**\n```suggestion\n{fix.get('fix', '')}\n```")
+            body_parts.append(f"\n**Предлагаемое исправление:**\n```suggestion\n{fix.get('fix', '')}\n```")
 
         inline.append({
             "path": file_path,
@@ -232,16 +259,16 @@ def _render_inline_comments(findings: list[dict], autofix_suggestions: list[dict
 def _render_status_check(risk_label: str, risk_score: int, policy_decision: str) -> dict:
     if policy_decision == "block":
         state = "failure"
-        description = f"Security issues found (risk score: {risk_score}/100)"
+        description = f"Найдены проблемы безопасности (оценка риска: {risk_score}/100)"
     elif policy_decision == "warn":
         state = "pending"
-        description = f"Security warnings present (risk score: {risk_score}/100)"
+        description = f"Есть предупреждения безопасности (оценка риска: {risk_score}/100)"
     else:
         state = "success"
-        description = f"No critical security issues (risk score: {risk_score}/100)"
+        description = f"Критических проблем безопасности нет (оценка риска: {risk_score}/100)"
 
     return {
         "state": state,
-        "description": description,
+        "description": description[:140],
         "context": "aegis/security-review",
     }

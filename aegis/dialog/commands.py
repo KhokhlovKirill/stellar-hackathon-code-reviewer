@@ -9,18 +9,34 @@ from aegis.observability.logging import get_logger
 
 log = get_logger(__name__)
 
+_SEVERITY_RU = {
+    "critical": "критический",
+    "high": "высокий",
+    "medium": "средний",
+    "low": "низкий",
+    "info": "инфо",
+}
+
+_SCAN_STATUS_RU = {
+    "completed": "завершён",
+    "running": "выполняется",
+    "failed": "ошибка",
+    "interrupted": "прерван",
+    "resumed": "возобновлён",
+}
+
 # Supported commands
 COMMANDS = {
-    "help": "Show available commands",
-    "rescan": "Trigger a new security scan",
-    "ignore": "Ignore a finding (provide finding ID or file:line)",
-    "status": "Show current scan status",
-    "findings": "List all findings for this PR",
-    "fp": "Mark a finding as false positive",
-    "approve": "Approve the PR (security team only)",
-    "reject": "Reject the PR (security team only)",
-    "retroscan": "Trigger retro scan on repository",
-    "summary": "Show risk summary",
+    "help": "Показать список команд",
+    "rescan": "Запустить повторный анализ безопасности",
+    "ignore": "Игнорировать находку (укажите файл:строка или ID)",
+    "status": "Показать статус текущего скана",
+    "findings": "Список находок по этому PR",
+    "fp": "Пометить находку как ложное срабатывание",
+    "approve": "Одобрить PR (только команда безопасности)",
+    "reject": "Отклонить PR (только команда безопасности)",
+    "retroscan": "Ретро-скан репозитория",
+    "summary": "Краткая сводка по риску",
 }
 
 # Pattern: @secbot <command> [args]
@@ -118,7 +134,7 @@ async def execute_command(
 
 
 async def _cmd_help(args: dict, ctx: dict) -> str:
-    lines = ["**Available @secbot commands:**", ""]
+    lines = ["**Команды @secbot:**", ""]
     for cmd, desc in COMMANDS.items():
         lines.append(f"- `@secbot {cmd}` — {desc}")
     return "\n".join(lines)
@@ -127,8 +143,11 @@ async def _cmd_help(args: dict, ctx: dict) -> str:
 async def _cmd_unknown(args: dict, ctx: dict) -> str:
     attempted = args.get("attempted_cmd", "")
     if attempted:
-        return f"Unknown command: `{attempted}`. Type `@secbot help` to see available commands."
-    return "I didn't understand that. Type `@secbot help` to see available commands."
+        return (
+            f"Неизвестная команда: `{attempted}`. "
+            f"Список команд: `@secbot help`."
+        )
+    return "Не удалось распознать команду. Напишите `@secbot help`."
 
 
 async def _cmd_rescan(args: dict, ctx: dict) -> str:
@@ -151,7 +170,7 @@ async def _cmd_rescan(args: dict, ctx: dict) -> str:
     repo_id = ctx.get("repo_id")
 
     if not repo_id or pr_number is None:
-        return "❌ Missing PR context — cannot rescan."
+        return "❌ Нет контекста PR — повторный запуск невозможен."
 
     try:
         settings = get_settings()
@@ -200,10 +219,13 @@ async def _cmd_rescan(args: dict, ctx: dict) -> str:
             pr_metadata={"number": int(pr_number), "head_sha": head_sha},
             force=args.get("force", False),
         )
-        return f"🔄 Re-scan queued (job: `{job_id}`). Results will be posted when complete."
+        return (
+            f"🔄 Повторный анализ поставлен в очередь (задача: `{job_id}`). "
+            f"Результаты появятся в комментариях PR после завершения."
+        )
     except Exception as exc:
         log.error("commands.rescan_error", error=str(exc))
-        return "❌ Failed to queue re-scan. Please try again later."
+        return "❌ Не удалось поставить повторный анализ в очередь. Попробуйте позже."
 
 
 async def _cmd_ignore(args: dict, ctx: dict) -> str:
@@ -212,7 +234,7 @@ async def _cmd_ignore(args: dict, ctx: dict) -> str:
     repo_id = ctx.get("repo_id")
 
     if not file_path:
-        return "Usage: `@secbot ignore <file>:<line> [reason]`"
+        return "Использование: `@secbot ignore <файл>:<строка> [причина]`"
 
     try:
         from datetime import datetime, timezone
@@ -226,7 +248,7 @@ async def _cmd_ignore(args: dict, ctx: dict) -> str:
         except (TypeError, ValueError):
             repo_pk = None
         if repo_pk is None:
-            return "❌ Cannot save ignore rule without a numeric repo_id."
+            return "❌ Нельзя сохранить правило без числового repo_id."
 
         session_factory = get_session_factory()
         async with session_factory() as session:
@@ -239,10 +261,10 @@ async def _cmd_ignore(args: dict, ctx: dict) -> str:
                 )
                 session.add(fp)
 
-        return f"✅ Finding at `{file_path}:{line}` will be ignored in future scans."
+        return f"✅ Находка `{file_path}:{line}` будет игнорироваться в следующих сканах."
     except Exception as exc:
         log.error("commands.ignore_error", error=str(exc))
-        return "❌ Failed to save ignore rule."
+        return "❌ Не удалось сохранить правило игнорирования."
 
 
 async def _cmd_false_positive(args: dict, ctx: dict) -> str:
@@ -263,7 +285,7 @@ async def _cmd_status(args: dict, ctx: dict) -> str:
         pr_pk = None
 
     if pr_pk is None:
-        return "No PR context available."
+        return "Контекст PR недоступен."
 
     try:
         session_factory = get_session_factory()
@@ -277,7 +299,7 @@ async def _cmd_status(args: dict, ctx: dict) -> str:
             execution = result.scalar_one_or_none()
 
         if not execution:
-            return "No scan found for this PR."
+            return "Для этого PR сканов не найдено."
 
         status_emoji = {
             "completed": "✅",
@@ -287,14 +309,21 @@ async def _cmd_status(args: dict, ctx: dict) -> str:
             "resumed": "▶️",
         }.get(execution.status, "❓")
 
+        st = execution.status
+        if hasattr(st, "value"):
+            st_key = str(st.value)
+        else:
+            st_key = str(st)
+        status_ru = _SCAN_STATUS_RU.get(st_key, st_key)
+
         return (
-            f"{status_emoji} **Scan Status**: {execution.status}\n"
-            f"- **Scan ID**: `{execution.scan_id}`\n"
-            f"- **Current Node**: {execution.current_node or 'N/A'}\n"
-            f"- **Started**: {execution.started_at.strftime('%Y-%m-%d %H:%M UTC') if execution.started_at else 'N/A'}"
+            f"{status_emoji} **Статус скана**: {status_ru}\n"
+            f"- **ID скана**: `{execution.scan_id}`\n"
+            f"- **Текущий узел графа**: {execution.current_node or '—'}\n"
+            f"- **Запуск**: {execution.started_at.strftime('%Y-%m-%d %H:%M UTC') if execution.started_at else '—'}"
         )
     except Exception as exc:
-        return f"❌ Failed to get status: {exc}"
+        return f"❌ Не удалось получить статус: {exc}"
 
 
 async def _cmd_findings(args: dict, ctx: dict) -> str:
@@ -309,7 +338,7 @@ async def _cmd_findings(args: dict, ctx: dict) -> str:
     except (TypeError, ValueError):
         pr_pk = None
     if pr_pk is None:
-        return "No PR context available."
+        return "Контекст PR недоступен."
 
     try:
         session_factory = get_session_factory()
@@ -326,17 +355,22 @@ async def _cmd_findings(args: dict, ctx: dict) -> str:
         findings = sorted(findings, key=lambda f: -_SEV.get(f.severity, 0))
 
         if not findings:
-            return "✅ No findings for this PR."
+            return "✅ Находок по этому PR нет."
 
-        lines = [f"**{len(findings)} findings:**", ""]
+        lines = [f"**Находок: {len(findings)}**", ""]
         severity_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
         for f in findings:
             emoji = severity_emoji.get(f.severity, "⚪")
-            lines.append(f"{emoji} `{f.file_path}:{f.line_number}` — {f.vuln_type} ({f.severity})")
+            sev = f.severity
+            sev_key = sev.value if hasattr(sev, "value") else str(sev)
+            sev_ru = _SEVERITY_RU.get(sev_key, sev_key)
+            lines.append(
+                f"{emoji} `{f.file_path}:{f.line_number}` — {f.vuln_type} ({sev_ru})"
+            )
 
         return "\n".join(lines)
     except Exception as exc:
-        return f"❌ Failed to get findings: {exc}"
+        return f"❌ Не удалось получить список находок: {exc}"
 
 
 async def _cmd_approve(args: dict, ctx: dict) -> str:
@@ -382,7 +416,7 @@ async def _handle_human_decision(decision: str, args: dict, ctx: dict) -> str:
     try:
         decision_enum = HumanDecisionEnum(decision)
     except ValueError:
-        return f"❌ Unknown decision: {decision}"
+        return f"❌ Неизвестное решение: {decision}"
 
     try:
         session_factory = get_session_factory()
@@ -414,11 +448,16 @@ async def _handle_human_decision(decision: str, args: dict, ctx: dict) -> str:
             except Exception as exc:
                 log.warning("commands.resume_warning", scan_id=scan_id, error=str(exc))
 
-        emoji = "✅" if decision == "approve" else "❌"
-        return f"{emoji} PR **{decision}d** by @{reviewer}" + (f"\n> {reason}" if reason else "")
+        if decision == "approve":
+            emoji = "✅"
+            msg = f"{emoji} PR **одобрен** (@{reviewer})"
+        else:
+            emoji = "❌"
+            msg = f"{emoji} PR **отклонён** (@{reviewer})"
+        return msg + (f"\n> {reason}" if reason else "")
     except Exception as exc:
         log.error("commands.decision_error", error=str(exc))
-        return f"❌ Failed to record decision: {exc}"
+        return f"❌ Не удалось записать решение: {exc}"
 
 
 async def _cmd_retroscan(args: dict, ctx: dict) -> str:
@@ -426,7 +465,7 @@ async def _cmd_retroscan(args: dict, ctx: dict) -> str:
 
     repo_id = ctx.get("repo_id")
     if not repo_id:
-        return "❌ No repository context available."
+        return "❌ Нет контекста репозитория."
 
     days = args.get("days", 30)
     limit = args.get("limit", 50)
@@ -434,13 +473,13 @@ async def _cmd_retroscan(args: dict, ctx: dict) -> str:
     try:
         summary = await run_retro_scan(repo_id=repo_id, days_back=days, limit=limit)
         return (
-            f"🔍 Retro scan initiated!\n"
-            f"- **PRs found**: {summary.get('total_prs', 0)}\n"
-            f"- **Queued for scan**: {summary.get('queued_for_scan', 0)}\n"
-            f"- Results will be posted as scans complete."
+            f"🔍 Ретро-скан запущен.\n"
+            f"- **Найдено PR**: {summary.get('total_prs', 0)}\n"
+            f"- **Поставлено в очередь**: {summary.get('queued_for_scan', 0)}\n"
+            f"- Результаты появятся по мере завершения сканов."
         )
     except Exception as exc:
-        return f"❌ Failed to start retro scan: {exc}"
+        return f"❌ Не удалось запустить ретро-скан: {exc}"
 
 
 async def _cmd_summary(args: dict, ctx: dict) -> str:
@@ -455,7 +494,7 @@ async def _cmd_summary(args: dict, ctx: dict) -> str:
     except (TypeError, ValueError):
         pr_pk = None
     if pr_pk is None:
-        return "No PR context."
+        return "Контекст PR недоступен."
 
     try:
         session_factory = get_session_factory()
@@ -466,16 +505,18 @@ async def _cmd_summary(args: dict, ctx: dict) -> str:
             pr = result.scalar_one_or_none()
 
         if not pr:
-            return "PR not found."
+            return "PR не найден в базе."
 
         risk_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "green": "✅"}.get(
             getattr(pr, "risk_label", "green"), "❓"
         )
+        label = getattr(pr, "risk_label", "N/A")
+        policy = (pr.analysis_metadata or {}).get("policy_decision", "N/A")
         return (
-            f"**Security Summary for PR #{pr.pr_number}**\n\n"
-            f"{risk_emoji} **Risk**: {getattr(pr, 'risk_label', 'N/A')} (score: {getattr(pr, 'risk_score', 0)}/100)\n"
-            f"- **Findings**: {getattr(pr, 'findings_count', 0)}\n"
-            f"- **Policy**: {(pr.analysis_metadata or {}).get('policy_decision', 'N/A')}"
+            f"**Сводка по безопасности: PR #{pr.pr_number}**\n\n"
+            f"{risk_emoji} **Риск**: {label} (оценка: {getattr(pr, 'risk_score', 0)}/100)\n"
+            f"- **Находок**: {getattr(pr, 'findings_count', 0)}\n"
+            f"- **Политика**: {policy}"
         )
     except Exception as exc:
-        return f"❌ Failed to get summary: {exc}"
+        return f"❌ Не удалось получить сводку: {exc}"
