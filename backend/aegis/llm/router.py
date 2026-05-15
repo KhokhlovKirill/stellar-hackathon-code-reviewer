@@ -10,7 +10,7 @@ Local-swap mode (LMSTUDIO_SWAP_MODELS=true):
 Cloud tiers (LMSTUDIO_SWAP_MODELS=false):
     detector_a  → cloud-generalist (DeepSeek V4 Flash free)  → cloud-mimo  → local-secure
     detector_b  → cloud-mimo (MiMo-V2-Flash)  → cloud-generalist  → local-secure
-    judge       → cloud-judge (Qwen3 Coder free)  → cloud-generalist  → local-secure
+    judge       → cloud-judge (env-selected, MiMo by default)  → cloud-generalist  → local-secure
 """
 
 from __future__ import annotations
