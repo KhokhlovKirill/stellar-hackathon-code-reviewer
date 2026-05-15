@@ -44,4 +44,4 @@ jobs:
       - name: Migrate + test
         run: alembic upgrade head && pytest -q
       - name: Eval regression gate (Phase 10)
-        run: python -m eval.run --gate || true
+        run: python -m eval.run --gate
