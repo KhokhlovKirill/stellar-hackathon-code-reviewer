@@ -69,6 +69,19 @@ class HumanDecisionEnum(str, enum.Enum):
     rerun = "rerun"
 
 
+def _str_enum_column(enum_cls: type[enum.Enum], *, length: int | None = None, **kwargs: Any):
+    """VARCHAR-backed enum — matches Alembic migrations (no native PG ENUM types)."""
+    return mapped_column(
+        Enum(
+            enum_cls,
+            native_enum=False,
+            length=length,
+            values_callable=lambda obj: [member.value for member in obj],
+        ),
+        **kwargs,
+    )
+
+
 # ── Models ────────────────────────────────────────────────────────────────────
 
 
@@ -78,7 +91,7 @@ class Repository(Base):
     __tablename__ = "repositories"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    provider: Mapped[str] = mapped_column(Enum(ProviderEnum), nullable=False)
+    provider: Mapped[str] = _str_enum_column(ProviderEnum, length=32, nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(String(512), nullable=False)
     # Fernet-encrypted provider token
@@ -145,7 +158,7 @@ class PullRequest(Base):
     scan_id: Mapped[str | None] = mapped_column(String(64), index=True)
     risk_score: Mapped[int] = mapped_column(Integer, server_default="0")
     risk_label: Mapped[str | None] = mapped_column(String(16))  # green/yellow/red
-    status: Mapped[str] = mapped_column(Enum(PRStatusEnum), server_default="'pending'")
+    status: Mapped[str] = _str_enum_column(PRStatusEnum, length=32, server_default=PRStatusEnum.pending.value)
     findings_count: Mapped[int] = mapped_column(Integer, server_default="0")
     critical_count: Mapped[int] = mapped_column(Integer, server_default="0")
     high_count: Mapped[int] = mapped_column(Integer, server_default="0")
@@ -182,7 +195,7 @@ class Finding(Base):
     end_line_number: Mapped[int | None] = mapped_column(Integer)
     vuln_type: Mapped[str | None] = mapped_column(String(128))
     cwe: Mapped[str | None] = mapped_column(String(32))  # e.g. "CWE-89"
-    severity: Mapped[str] = mapped_column(Enum(SeverityEnum), nullable=False)
+    severity: Mapped[str] = _str_enum_column(SeverityEnum, length=16, nullable=False)
     confidence: Mapped[float] = mapped_column(server_default="0.8")
     description: Mapped[str | None] = mapped_column(Text)
     fix_snippet: Mapped[str | None] = mapped_column(Text)
@@ -268,7 +281,9 @@ class GraphExecution(Base):
     pr_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("pull_requests.id", ondelete="SET NULL"))
     graph_id: Mapped[str | None] = mapped_column(String(128))
     current_node: Mapped[str | None] = mapped_column(String(128))
-    status: Mapped[str] = mapped_column(Enum(GraphStatusEnum), server_default="'running'")
+    status: Mapped[str] = _str_enum_column(
+        GraphStatusEnum, length=32, server_default=GraphStatusEnum.running.value
+    )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     interrupted: Mapped[bool] = mapped_column(Boolean, server_default="false")
@@ -292,7 +307,7 @@ class GraphNodeRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duration_ms: Mapped[int] = mapped_column(Integer, server_default="0")
-    status: Mapped[str] = mapped_column(String(32), server_default="'ok'")
+    status: Mapped[str] = mapped_column(String(32), server_default="ok")
     retries: Mapped[int] = mapped_column(Integer, server_default="0")
     error: Mapped[str | None] = mapped_column(Text)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
@@ -309,7 +324,7 @@ class HumanReview(Base):
     scan_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     finding_fingerprint: Mapped[str | None] = mapped_column(String(64))
     reviewer: Mapped[str | None] = mapped_column(String(255))
-    decision: Mapped[str] = mapped_column(Enum(HumanDecisionEnum), nullable=False)
+    decision: Mapped[str] = _str_enum_column(HumanDecisionEnum, length=32, nullable=False)
     rationale: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -324,7 +339,7 @@ class KnowledgeBase(Base):
     pr_number: Mapped[int | None] = mapped_column(Integer)
     cwe: Mapped[str | None] = mapped_column(String(32))
     vuln_type: Mapped[str | None] = mapped_column(String(128))
-    severity: Mapped[str | None] = mapped_column(Enum(SeverityEnum))
+    severity: Mapped[str | None] = _str_enum_column(SeverityEnum, length=16, nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     fix_snippet: Mapped[str | None] = mapped_column(Text)
     file_path: Mapped[str | None] = mapped_column(String(512))
