@@ -83,13 +83,10 @@ def upgrade() -> None:
         sa.Column("fix_snippet", sa.Text),
         sa.Column("source", sa.String(64)),
         sa.Column("fingerprint", sa.String(64)),
-        sa.Column("embedding", sa.Column("embedding", type_=sa.Text)),  # placeholder; real type below
         sa.Column("is_suppressed", sa.Boolean, server_default="false"),
         sa.Column("comment_id", sa.String(64)),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
-    # Add real vector column separately
-    op.execute("ALTER TABLE findings DROP COLUMN IF EXISTS embedding")
     op.execute("ALTER TABLE findings ADD COLUMN embedding vector(1536)")
     op.create_index("ix_finding_pr_severity", "findings", ["pr_id", "severity"])
     op.create_index("ix_finding_fingerprint", "findings", ["fingerprint"])
@@ -231,13 +228,13 @@ def upgrade() -> None:
         )
     """)
 
-    # HNSW indexes for fast ANN (only valid after rows are inserted, so deferred)
+    # HNSW indexes (non-concurrent — CONCURRENTLY cannot run inside Alembic's transaction)
     op.execute(
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_findings_embedding "
+        "CREATE INDEX IF NOT EXISTS ix_findings_embedding "
         "ON findings USING hnsw (embedding vector_cosine_ops)"
     )
     op.execute(
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_kb_embedding "
+        "CREATE INDEX IF NOT EXISTS ix_kb_embedding "
         "ON knowledge_base USING hnsw (embedding vector_cosine_ops)"
     )
 

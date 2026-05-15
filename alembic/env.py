@@ -19,7 +19,11 @@ sync_url = settings.database_sync_url
 config.set_main_option("sqlalchemy.url", sync_url)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    try:
+        fileConfig(config.config_file_name)
+    except Exception:
+        # Logging config is optional; do not block migrations in minimal containers.
+        pass
 
 target_metadata = Base.metadata
 

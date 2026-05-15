@@ -24,6 +24,10 @@ def run_migrations() -> None:
 
     cfg = Config(str(ini_path))
     cfg.set_main_option("sqlalchemy.url", settings.database_sync_url)
-    log.info("db.migrations_start")
-    command.upgrade(cfg, "head")
+    log.info("db.migrations_start", url=settings.database_sync_url.split("@")[-1])
+    try:
+        command.upgrade(cfg, "head")
+    except Exception:
+        log.exception("db.migrations_failed")
+        raise
     log.info("db.migrations_done")
