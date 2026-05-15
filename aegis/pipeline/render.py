@@ -101,6 +101,13 @@ def render_summary(state: PipelineState) -> str:
         lines.extend(["", "**Degraded components**"])
         lines.extend(f"- `{item}`" for item in state.result.degraded)
 
+    if state.suppressed_findings:
+        lines.extend(["", "**Suppressed by team feedback**"])
+        lines.extend(
+            f"- `{finding.file}:{finding.line}` {finding.title}"
+            for finding in state.suppressed_findings[:20]
+        )
+
     if not state.findings:
         lines.extend(["", "No confirmed security findings on changed code lines."])
     else:

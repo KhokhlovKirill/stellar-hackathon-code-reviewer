@@ -24,6 +24,7 @@ class PipelineState:
     manifest_files: list[FileChange] = field(default_factory=list)   # dependency manifests
     context_map: dict[str, str] = field(default_factory=dict)         # path -> narrow context
     findings: list[Finding] = field(default_factory=list)            # accumulates
+    suppressed_findings: list[Finding] = field(default_factory=list)
     risk_score: int = 0
     risk_label: str = "low"
     summary_ref: str | None = None
