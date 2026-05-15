@@ -11,6 +11,9 @@ from aegis.observability.logging import get_logger
 
 log = get_logger(__name__)
 
+# Must match WorkerSettings.queue_name in aegis.worker.main
+ARQ_QUEUE_NAME = "aegis:queue"
+
 _GRAPH_TIMEOUT_SECONDS = 600  # 10 minutes max per scan
 _REDIS_POOL = None
 
@@ -61,6 +64,7 @@ async def enqueue_scan(
         force=force,
         retro=retro,
         _job_id=scan_id,
+        _queue_name=ARQ_QUEUE_NAME,
     )
 
     log.info("worker.enqueued", scan_id=scan_id, repo=repo_full_name, pr=pr_number)

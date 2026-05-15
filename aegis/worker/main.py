@@ -50,7 +50,7 @@ async def on_job_end(ctx: dict) -> None:
 def get_worker_settings():
     """Build and return Arq WorkerSettings."""
     from aegis.config import get_settings
-    from aegis.worker.graph_worker import run_graph_scan
+    from aegis.worker.graph_worker import ARQ_QUEUE_NAME, run_graph_scan
 
     settings = get_settings()
 
@@ -69,7 +69,7 @@ def get_worker_settings():
         max_tries = 2  # Retry once on failure
         retry_jobs = True
         allow_abort_jobs = True
-        queue_name = "aegis:queue"
+        queue_name = ARQ_QUEUE_NAME
         log_results = True
 
     return WorkerSettings
