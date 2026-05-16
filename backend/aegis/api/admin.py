@@ -27,6 +27,7 @@ from aegis.db.models import (
     Scan,
     User,
 )
+from aegis.repos import replace_repo_secret
 from aegis.schemas import Provider
 from aegis.vault import encrypt
 
@@ -305,14 +306,12 @@ async def add_repo_to_project(
         if existing is None:
             session.add(repo)
             await session.flush()
-        session.add(RepoSecret(
-            repo_id=repo.id, kind="access_token",
-            ciphertext=encrypt(req.access_token),
-        ))
-        session.add(RepoSecret(
-            repo_id=repo.id, kind="webhook_secret",
-            ciphertext=encrypt(req.webhook_secret),
-        ))
+        await replace_repo_secret(
+            session, repo.id, "access_token", encrypt(req.access_token)
+        )
+        await replace_repo_secret(
+            session, repo.id, "webhook_secret", encrypt(req.webhook_secret)
+        )
         policy = (
             await session.execute(
                 select(RepoPolicy).where(RepoPolicy.repo_id == repo.id)
@@ -359,19 +358,11 @@ async def create_repo(req: RepoCreate, actor: str = Depends(require_admin)) -> R
         if existing is None:
             session.add(repo)
             await session.flush()
-        session.add(
-            RepoSecret(
-                repo_id=repo.id,
-                kind="access_token",
-                ciphertext=encrypt(req.access_token),
-            )
+        await replace_repo_secret(
+            session, repo.id, "access_token", encrypt(req.access_token)
         )
-        session.add(
-            RepoSecret(
-                repo_id=repo.id,
-                kind="webhook_secret",
-                ciphertext=encrypt(req.webhook_secret),
-            )
+        await replace_repo_secret(
+            session, repo.id, "webhook_secret", encrypt(req.webhook_secret)
         )
         policy = (
             await session.execute(
@@ -826,12 +817,12 @@ async def quick_connect_repo(
         if existing is None:
             session.add(repo)
             await session.flush()
-        session.add(RepoSecret(
-            repo_id=repo.id, kind="access_token", ciphertext=encrypt(req.access_token)
-        ))
-        session.add(RepoSecret(
-            repo_id=repo.id, kind="webhook_secret", ciphertext=encrypt(webhook_secret_val)
-        ))
+        await replace_repo_secret(
+            session, repo.id, "access_token", encrypt(req.access_token)
+        )
+        await replace_repo_secret(
+            session, repo.id, "webhook_secret", encrypt(webhook_secret_val)
+        )
         policy = (
             await session.execute(select(RepoPolicy).where(RepoPolicy.repo_id == repo.id))
         ).scalar_one_or_none() or RepoPolicy(repo_id=repo.id)
@@ -852,14 +843,20 @@ async def quick_connect_repo(
 
 async def _repo_token(repo: Repository) -> str | None:
     async with get_session() as session:
+        # A repo may legitimately have several historical access_token rows
+        # (each re-connect adds one). Always use the most recent — never
+        # scalar_one_or_none(), which raises MultipleResultsFound and 500s
+        # the whole project page.
         secret = (
             await session.execute(
-                select(RepoSecret).where(
+                select(RepoSecret)
+                .where(
                     RepoSecret.repo_id == repo.id,
                     RepoSecret.kind == "access_token",
                 )
+                .order_by(RepoSecret.created_at.desc(), RepoSecret.id.desc())
             )
-        ).scalar_one_or_none()
+        ).scalars().first()
     if secret is None:
         return None
     from aegis.vault import decrypt

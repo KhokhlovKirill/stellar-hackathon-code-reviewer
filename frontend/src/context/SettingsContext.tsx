@@ -74,6 +74,38 @@ const STRINGS = {
 
     "common.loading": "Загрузка…",
     "common.error": "Ошибка",
+
+    // ── Backend error details → localized text ───────────────────────────
+    "err.invalid credentials": "Неверный email или пароль",
+    "err.email already registered": "Этот email уже зарегистрирован",
+    "err.unknown user": "Пользователь не найден",
+    "err.missing bearer token": "Требуется вход в систему",
+    "err.login required": "Требуется вход в систему",
+    "err.invalid token": "Сессия недействительна — войдите снова",
+    "err.invalid token signature": "Сессия недействительна — войдите снова",
+    "err.invalid subject": "Сессия недействительна — войдите снова",
+    "err.token expired": "Сессия истекла — войдите снова",
+    "err.project not found": "Проект не найден",
+    "err.repo not found": "Репозиторий не найден",
+    "err.scan not found": "Скан не найден",
+    "err.project name already exists": "Проект с таким названием уже существует",
+    "err.language must be 'ru' or 'en'": "Язык должен быть 'ru' или 'en'",
+    "err.Cannot parse GitHub repo URL": "Не удалось разобрать URL GitHub-репозитория",
+    "err.Cannot parse repository URL": "Не удалось разобрать URL репозитория",
+    "err.GitHub repo not found — check URL or token scope":
+      "GitHub-репозиторий не найден — проверьте URL или права токена",
+    "err.GitHub token invalid or expired":
+      "GitHub-токен недействителен или истёк",
+    "err.GitLab repo not found — check URL or token scope":
+      "GitLab-репозиторий не найден — проверьте URL или права токена",
+    "err.GitLab token invalid or expired":
+      "GitLab-токен недействителен или истёк",
+    "err.unauthorized": "Требуется вход в систему",
+    "err.network": "Сервис недоступен — повторите попытку через несколько секунд",
+    "err.generic": "Что-то пошло не так. Попробуйте ещё раз.",
+    "err.login_failed": "Не удалось войти",
+    "err.register_failed": "Не удалось зарегистрироваться",
+    "err.project_load_failed": "Не удалось загрузить проект",
   },
   en: {
     "nav.product": "Product",
@@ -135,6 +167,38 @@ const STRINGS = {
 
     "common.loading": "Loading…",
     "common.error": "Error",
+
+    // ── Backend error details → localized text ───────────────────────────
+    "err.invalid credentials": "Invalid email or password",
+    "err.email already registered": "This email is already registered",
+    "err.unknown user": "User not found",
+    "err.missing bearer token": "Sign-in required",
+    "err.login required": "Sign-in required",
+    "err.invalid token": "Session is invalid — please sign in again",
+    "err.invalid token signature": "Session is invalid — please sign in again",
+    "err.invalid subject": "Session is invalid — please sign in again",
+    "err.token expired": "Session expired — please sign in again",
+    "err.project not found": "Project not found",
+    "err.repo not found": "Repository not found",
+    "err.scan not found": "Scan not found",
+    "err.project name already exists": "A project with this name already exists",
+    "err.language must be 'ru' or 'en'": "Language must be 'ru' or 'en'",
+    "err.Cannot parse GitHub repo URL": "Could not parse the GitHub repo URL",
+    "err.Cannot parse repository URL": "Could not parse the repository URL",
+    "err.GitHub repo not found — check URL or token scope":
+      "GitHub repo not found — check the URL or token scope",
+    "err.GitHub token invalid or expired":
+      "GitHub token is invalid or expired",
+    "err.GitLab repo not found — check URL or token scope":
+      "GitLab repo not found — check the URL or token scope",
+    "err.GitLab token invalid or expired":
+      "GitLab token is invalid or expired",
+    "err.unauthorized": "Sign-in required",
+    "err.network": "Service unavailable — please retry in a few seconds",
+    "err.generic": "Something went wrong. Please try again.",
+    "err.login_failed": "Could not sign in",
+    "err.register_failed": "Could not sign up",
+    "err.project_load_failed": "Could not load the project",
   },
 } as const;
 
@@ -144,15 +208,40 @@ interface SettingsContextValue {
   lang: Lang;
   setLang: (l: Lang) => void;
   t: (key: StringKey) => string;
+  /**
+   * Localize an unknown thrown value (ApiError / Error / string) to the
+   * active language. Maps known backend `detail` codes via the `err.*`
+   * dictionary; falls back to a generic localized message rather than
+   * leaking raw English ("Unauthorized", "Not Found", …) to the user.
+   */
+  localizeError: (err: unknown, fallbackKey?: StringKey) => string;
 }
 
 const SettingsContext = createContext<SettingsContextValue>({
   lang: "ru",
   setLang: () => {},
   t: (k) => k,
+  localizeError: () => "Error",
 });
 
 const LS_KEY = "aegis-lang";
+
+interface ErrorLike {
+  detail?: unknown;
+  message?: unknown;
+  status?: unknown;
+}
+
+function extractDetail(err: unknown): { detail: string; status: number } {
+  if (typeof err === "string") return { detail: err, status: 0 };
+  const e = (err ?? {}) as ErrorLike;
+  const detail =
+    (typeof e.detail === "string" && e.detail) ||
+    (typeof e.message === "string" && e.message) ||
+    "";
+  const status = typeof e.status === "number" ? e.status : 0;
+  return { detail: detail.trim(), status };
+}
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => {
@@ -258,7 +347,41 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     [lang],
   );
 
-  const value = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t]);
+  const localizeError = useCallback(
+    (err: unknown, fallbackKey: StringKey = "err.generic"): string => {
+      const { detail, status } = extractDetail(err);
+      const dict = STRINGS[lang];
+      // 1. Exact backend detail code → localized text.
+      if (detail) {
+        const key = `err.${detail}` as StringKey;
+        if (key in dict) return dict[key];
+      }
+      // 2. Network/backend-unavailable heuristic.
+      if (
+        /network error|failed to fetch|backend unavailable/i.test(detail) ||
+        status === 502 ||
+        status === 503
+      ) {
+        return dict["err.network"];
+      }
+      // 3. Bare auth status with no usable detail.
+      if (status === 401 || status === 403 || /unauthorized/i.test(detail)) {
+        return dict["err.unauthorized"];
+      }
+      // 4. A detail that's already human prose (not a raw status word) — show
+      //    it as-is; otherwise the localized fallback.
+      if (detail && !/^[a-z ]+$/.test(detail) && detail.length > 3) {
+        return detail;
+      }
+      return dict[fallbackKey] ?? dict["err.generic"];
+    },
+    [lang],
+  );
+
+  const value = useMemo(
+    () => ({ lang, setLang, t, localizeError }),
+    [lang, setLang, t, localizeError],
+  );
 
   return (
     <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>

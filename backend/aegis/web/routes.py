@@ -33,12 +33,12 @@ from aegis.db.models import (
     FindingRow,
     Project,
     RepoPolicy,
-    RepoSecret,
     Repository,
     Scan,
     User,
 )
 from aegis.obs import get_logger
+from aegis.repos import replace_repo_secret
 from aegis.schemas import Provider
 from aegis.vault import encrypt
 
@@ -285,10 +285,8 @@ async def add_repo_submit(
         if existing is None:
             s.add(repo)
             await s.flush()
-        s.add(RepoSecret(repo_id=repo.id, kind="access_token",
-                         ciphertext=encrypt(access_token)))
-        s.add(RepoSecret(repo_id=repo.id, kind="webhook_secret",
-                         ciphertext=encrypt(webhook_secret)))
+        await replace_repo_secret(s, repo.id, "access_token", encrypt(access_token))
+        await replace_repo_secret(s, repo.id, "webhook_secret", encrypt(webhook_secret))
         policy = (
             await s.execute(
                 select(RepoPolicy).where(RepoPolicy.repo_id == repo.id)
@@ -397,12 +395,10 @@ async def quick_connect_submit(
         if existing is None:
             s.add(repo)
             await s.flush()
-        s.add(RepoSecret(
-            repo_id=repo.id, kind="access_token", ciphertext=encrypt(access_token)
-        ))
-        s.add(RepoSecret(
-            repo_id=repo.id, kind="webhook_secret", ciphertext=encrypt(webhook_secret_val)
-        ))
+        await replace_repo_secret(s, repo.id, "access_token", encrypt(access_token))
+        await replace_repo_secret(
+            s, repo.id, "webhook_secret", encrypt(webhook_secret_val)
+        )
         policy = (
             await s.execute(select(RepoPolicy).where(RepoPolicy.repo_id == repo.id))
         ).scalar_one_or_none() or RepoPolicy(repo_id=repo.id)

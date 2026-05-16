@@ -78,6 +78,12 @@ class Repository(Base):
 
 class RepoSecret(Base):
     __tablename__ = "repo_secrets"
+    # Exactly one secret per (repo, kind). Enforced at the DB level so a
+    # buggy/legacy write path can never reintroduce duplicates (which used to
+    # 500 the project page via scalar_one_or_none → MultipleResultsFound).
+    __table_args__ = (
+        UniqueConstraint("repo_id", "kind", name="uq_repo_secret_repo_kind"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     repo_id: Mapped[int] = mapped_column(ForeignKey("repositories.id", ondelete="CASCADE"))

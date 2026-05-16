@@ -112,8 +112,11 @@ def test_gitlab_base_url_default_and_selfhosted() -> None:
     p = GitLabProvider()
     assert p.base_url == "https://gitlab.com/api/v4"
 
-    # Webhook from a self-hosted instance auto-targets that instance.
-    p.parse_event(
+    # A webhook from a self-hosted instance carries that instance's API base
+    # ON THE EVENT (not on shared provider state — the provider is a
+    # process-wide singleton used by concurrent scans). The worker then
+    # reconstructs the right host from the carried value after the queue.
+    ev = p.parse_event(
         {"x-gitlab-event": "Merge Request Hook", "x-gitlab-event-uuid": "d"},
         {
             "project": {
@@ -125,7 +128,12 @@ def test_gitlab_base_url_default_and_selfhosted() -> None:
             "user": {"username": "u"},
         },
     )
-    assert p.base_url == "https://git.khokhlovkirill.ru/api/v4"
+    assert ev.instance_api_base == "https://git.khokhlovkirill.ru/api/v4"
+    # Shared provider state is NOT mutated (no cross-scan bleed).
+    assert p.base_url == "https://gitlab.com/api/v4"
+    # Per-call resolution honors the carried value, else the default.
+    assert p._root(ev.instance_api_base) == "https://git.khokhlovkirill.ru/api/v4"
+    assert p._root(None) == "https://gitlab.com/api/v4"
 
 
 # ── Repo URL parsing: GitHub + self-hosted GitLab ─────────────────────────────

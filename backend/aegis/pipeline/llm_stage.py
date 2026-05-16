@@ -14,9 +14,14 @@ from aegis.llm.prompt import judge_messages, review_messages
 from aegis.llm.router import LLMRouter
 from aegis.obs import get_logger, metrics
 from aegis.pipeline.state import PipelineState
-from aegis.schemas import Finding, FindingSource
+from aegis.schemas import Finding, FindingSource, Severity
 
 log = get_logger("aegis.llm_stage")
+
+# Mandatory-Don ensemble budgets (mirror the pull-mode/VS Code path so a
+# webhook scan and a manual scan apply the same security model coverage).
+_CLOUD_DETECTOR_BUDGET_SECONDS = 90
+_DON_DETECTOR_BUDGET_SECONDS = 150
 
 
 def _changed_lines(state: PipelineState) -> dict[str, set[int]]:
@@ -88,28 +93,86 @@ async def run_llm_analysis(state: PipelineState) -> None:
     positions = _diff_positions(state)
     det = [f for f in state.findings if f.source is FindingSource.DETERMINISTIC]
 
+    lang = getattr(state.ctx, "lang", "ru") or "ru"
     messages = review_messages(
         repo=state.pr.repo_slug,
         pr_id=state.pr.pr_id,
         files=state.code_files,
         deterministic_findings=det,
         context_map=state.context_map,
+        lang=lang,
     )
 
-    async def _run(role: str) -> LLMCompletion | None:
+    # ---- Mandatory Don (local-secure / LM Studio) ensemble --------------------
+    # Webhook scans must apply the same security-model coverage as the manual
+    # VS Code / pull-mode path: a cloud detector AND the local fine-tuned Don
+    # model run concurrently. Don is forced onto the `local-secure` tier via
+    # complete_on_tier so cloud success (or a cache hit) can never silently
+    # skip it. The Don prompt is trimmed to LM Studio's loaded context.
+    from aegis.pipeline.simple_scan import (
+        _get_local_context_tokens,
+        _trim_files_to_budget,
+    )
+
+    ctx_tokens = await _get_local_context_tokens()
+    available_tokens = max(ctx_tokens - 4096 - 500, 2048)
+    don_files = _trim_files_to_budget(state.code_files, int(available_tokens * 2.0))
+    don_review = review_messages(
+        repo=state.pr.repo_slug,
+        pr_id=state.pr.pr_id,
+        files=don_files,
+        deterministic_findings=det,
+        context_map=state.context_map,
+        lang=lang,
+    )
+    don_messages = [
+        {
+            "role": "system",
+            "content": (
+                don_review[0]["content"]
+                + "\n\nYou are Don, the mandatory local security specialist for "
+                "this review. Use your offensive-security knowledge to find "
+                "exploitable issues in the changed code, but do not use action "
+                "tags. Return only the JSON object requested above."
+            ),
+        },
+        don_review[1],
+    ]
+
+    async def _run_cloud() -> LLMCompletion | None:
         try:
-            return await router.complete(role=role, messages=messages, schema=schema)
-        except LLMError as exc:
-            state.result.degraded.append(role)
+            return await asyncio.wait_for(
+                router.complete(
+                    role="detector_a", messages=messages, schema=schema,
+                    max_tokens=4096,
+                ),
+                timeout=_CLOUD_DETECTOR_BUDGET_SECONDS,
+            )
+        except (LLMError, TimeoutError) as exc:
+            state.result.degraded.append("cloud-detector")
             log.warning(
-                "llm.detector_unavailable",
-                scan_id=state.scan_id,
-                role=role,
-                error=str(exc),
+                "llm.detector_unavailable", scan_id=state.scan_id,
+                role="detector_a", error=str(exc),
             )
             return None
 
-    detector_a, detector_b = await asyncio.gather(_run("detector_a"), _run("detector_b"))
+    async def _run_don() -> LLMCompletion | None:
+        try:
+            return await asyncio.wait_for(
+                router.complete_on_tier(
+                    tier="local-secure", role="detector_b",
+                    messages=don_messages, schema=schema, max_tokens=4096,
+                ),
+                timeout=_DON_DETECTOR_BUDGET_SECONDS,
+            )
+        except (LLMError, TimeoutError) as exc:
+            state.result.degraded.append("local-secure")
+            log.warning(
+                "llm.don_unavailable", scan_id=state.scan_id, error=str(exc),
+            )
+            return None
+
+    detector_a, detector_b = await asyncio.gather(_run_cloud(), _run_don())
     calls = [c for c in (detector_a, detector_b) if c is not None]
     await _persist_calls(state.scan_id, calls)
 
@@ -117,17 +180,32 @@ async def run_llm_analysis(state: PipelineState) -> None:
     if detector_a is not None:
         candidates.extend(parse_findings(
             detector_a.content,
-            source=FindingSource.LLM_A,
-            changed_lines=changed,
-            diff_positions=positions,
-        ))
-    if detector_b is not None:
-        candidates.extend(parse_findings(
-            detector_b.content,
             source=FindingSource.LLM_B,
             changed_lines=changed,
             diff_positions=positions,
         ))
+    if detector_b is not None:
+        # Don findings carry source LLM_A (mirrors pull-mode so the judge and
+        # UI attribute the local specialist consistently).
+        raw_don = parse_findings(
+            detector_b.content,
+            source=FindingSource.LLM_A,
+            changed_lines=changed,
+            diff_positions=positions,
+        )
+        candidates.extend(
+            f for f in raw_don
+            if f.severity in (
+                Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW
+            )
+        )
+        log.info(
+            "llm.don_detector_ok",
+            scan_id=state.scan_id,
+            tier=detector_b.tier,
+            count=len(raw_don),
+            completion_tokens=detector_b.usage.completion_tokens,
+        )
 
     final_llm: list[Finding] = []
     if candidates:
@@ -140,6 +218,7 @@ async def run_llm_analysis(state: PipelineState) -> None:
                     files=state.code_files,
                     candidates=[*det, *candidates],
                     context_map=state.context_map,
+                    lang=lang,
                 ),
                 schema=schema,
             )

@@ -98,6 +98,11 @@ class WebhookEvent(BaseModel):
     comment_body: str | None = None
     in_reply_to_id: str | None = None
     thread_id: str | None = None
+    # Self-hosted GitLab: API base derived from the webhook payload's web_url
+    # (e.g. https://git.example.com/api/v4). Carried explicitly so it survives
+    # the web→queue→worker boundary instead of relying on shared mutable
+    # provider state (which a concurrent scan could clobber).
+    instance_api_base: str | None = None
 
     def dedupe_key(self) -> str:
         basis = ":".join([
@@ -119,6 +124,9 @@ class PullRequest(BaseModel):
     base_ref: str = ""
     head_ref: str = ""
     author: str = ""
+    # See WebhookEvent.instance_api_base — propagated so every subsequent
+    # provider call (diff, comments, status) targets the right GitLab host.
+    instance_api_base: str | None = None
 
 
 class Finding(BaseModel):

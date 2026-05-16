@@ -49,12 +49,16 @@ async function apiFetch<T>(
   }
 
   const res = await fetch(path, { ...init, headers });
-  if (res.status === 401) {
-    clearToken();
-    throw new ApiError("Unauthorized", 401);
-  }
   if (!res.ok) {
+    // Always read the backend's real reason first — never discard a 401's
+    // detail (e.g. "invalid credentials") behind a generic "Unauthorized",
+    // otherwise the UI can't localize it ("Неверный пароль" / etc.).
     const detail = await parseError(res);
+    // Only drop a stored token when an *authenticated* request was rejected.
+    // A failed login/register has no token to clear and must keep its detail.
+    if (res.status === 401 && token) {
+      clearToken();
+    }
     throw new ApiError(detail, res.status, detail);
   }
   if (res.status === 204) return undefined as T;

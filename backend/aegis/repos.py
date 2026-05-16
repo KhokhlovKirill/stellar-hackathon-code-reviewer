@@ -8,14 +8,35 @@ is populated. Plaintext is returned only to short-lived callers, never persisted
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from aegis.config import get_config, get_settings
 from aegis.db import get_session
 from aegis.db.models import RepoSecret, Repository
 from aegis.schemas import Provider
 from aegis.vault import decrypt
+
+
+async def replace_repo_secret(
+    session: Any, repo_id: int, kind: str, ciphertext: str
+) -> None:
+    """Replace every secret of `kind` for a repo with a single fresh row.
+
+    Previously each (re)connect appended a new RepoSecret without removing
+    the old ones. That (a) made scalar_one_or_none() raise
+    MultipleResultsFound and 500 the project page, and (b) left stale /
+    possibly-leaked tokens decryptable in the DB forever — a real security
+    hygiene problem. Deleting prior rows of the same kind fixes both.
+    """
+    await session.execute(
+        delete(RepoSecret).where(
+            RepoSecret.repo_id == repo_id,
+            RepoSecret.kind == kind,
+        )
+    )
+    session.add(RepoSecret(repo_id=repo_id, kind=kind, ciphertext=ciphertext))
 
 
 @dataclass(slots=True)

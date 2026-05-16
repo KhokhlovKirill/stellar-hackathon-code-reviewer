@@ -30,33 +30,53 @@ _MR_UPDATED = {"update"}
 class GitLabProvider(HttpMixin):
     provider = Provider.GITLAB
 
-    _base_url_override: str | None = None
-
     @property
-    def base_url(self) -> str:
-        """GitLab API v4 base for the configured instance.
+    def base_url(self) -> str:  # type: ignore[override]
+        """Default GitLab API v4 base (GITLAB_BASE_URL setting, else gitlab.com).
 
-        Supports self-hosted GitLab (e.g. https://git.khokhlovkirill.ru) via
-        the `GITLAB_BASE_URL` setting; defaults to gitlab.com. A webhook can
-        set an explicit instance host (see `parse_event`) which takes
-        precedence over the global setting.
+        This is only the *fallback*. The actual instance for a given scan is
+        resolved per-call from the carried `instance_api_base` (see `_root`);
+        we deliberately keep no mutable per-instance override because the
+        provider is a process-wide singleton shared by concurrent scans.
         """
-        if self._base_url_override:
-            return self._base_url_override
+        return self._default_root()
+
+    @staticmethod
+    def _default_root() -> str:
         from aegis.config import get_settings
 
         root = (get_settings().gitlab_base_url or "https://gitlab.com").rstrip("/")
         return f"{root}/api/v4"
 
-    @base_url.setter
-    def base_url(self, value: str) -> None:
-        self._base_url_override = value
+    def _root(self, carried: str | None) -> str:
+        """API root for this call: the instance that sent the webhook (carried
+        on the event/PR) takes precedence over the global default.
+
+        The scheme from the webhook payload is preserved as-is. We do NOT
+        force https here: some self-hosted instances serve a TLS certificate
+        that does not match their own hostname and instead 301-redirect
+        http→https to a cert-valid canonical host. Forcing https on the literal
+        host would fail certificate verification and break every call;
+        following the server's own redirect (httpx `follow_redirects=True`)
+        lands on the host its certificate is actually valid for."""
+        return (carried or self._default_root()).rstrip("/")
+
+    def _url(self, carried: str | None, path: str) -> str:
+        """Absolute API URL so request routing never depends on shared state."""
+        return f"{self._root(carried)}{path}"
 
     @staticmethod
     def _api_base_from_web_url(web_url: str) -> str | None:
-        """Derive `https://<host>/api/v4` from a project web URL in a payload."""
-        m = re.match(r"^(https?://[^/]+)", web_url or "")
-        return f"{m.group(1)}/api/v4" if m else None
+        """Derive `<scheme>://<host>/api/v4` from a project web URL in a payload.
+
+        The scheme is preserved from the payload. Some self-hosted GitLab
+        instances present a certificate that does not match their own
+        hostname and 301-redirect http→https to a cert-valid host; forcing
+        https on the literal host would fail TLS verification. Following the
+        server's redirect (httpx `follow_redirects=True`) is correct here.
+        """
+        m = re.match(r"^(https?)://([^/]+)", web_url or "")
+        return f"{m.group(1)}://{m.group(2)}/api/v4" if m else None
 
     def _auth_headers(self, token: str) -> dict[str, str]:
         return {"PRIVATE-TOKEN": token}
@@ -69,12 +89,11 @@ class GitLabProvider(HttpMixin):
         repo_id = str(project.get("id", ""))
 
         # Auto-target the GitLab instance that sent the webhook (handles
-        # self-hosted instances without per-deploy config). Falls back to the
-        # GITLAB_BASE_URL setting when the payload has no usable host.
+        # self-hosted instances without per-deploy config). Carried on the
+        # event so the worker reconstructs the right host after the queue
+        # round-trip; falls back to the GITLAB_BASE_URL setting otherwise.
         web_url = project.get("web_url") or payload.get("repository", {}).get("homepage", "")
         api_base = self._api_base_from_web_url(web_url)
-        if api_base:
-            self._base_url_override = api_base
 
         if kind_hdr == "Merge Request Hook":
             attrs = payload.get("object_attributes", {})
@@ -94,12 +113,13 @@ class GitLabProvider(HttpMixin):
                 or attrs.get("last_commit", {}).get("id"),
                 title=attrs.get("title", ""),
                 actor=payload.get("user", {}).get("username", ""),
+                instance_api_base=api_base,
             )
 
         if kind_hdr == "Note Hook":
             note = payload.get("object_attributes", {})
             if note.get("noteable_type") != "MergeRequest":
-                return self._ignored(delivery, slug, repo_id)
+                return self._ignored(delivery, slug, repo_id, api_base)
             mr = payload.get("merge_request", {})
             return WebhookEvent(
                 provider=self.provider, kind=EventKind.COMMENT, delivery_id=delivery,
@@ -108,22 +128,44 @@ class GitLabProvider(HttpMixin):
                 actor=payload.get("user", {}).get("username", ""),
                 comment_id=str(note.get("id", "")), comment_body=note.get("note", ""),
                 thread_id=str(note.get("discussion_id") or note.get("id", "")),
+                instance_api_base=api_base,
             )
         raise WebhookPayloadError(f"unhandled gitlab event '{kind_hdr}'")
 
-    def _ignored(self, delivery: str, slug: str, repo_id: str) -> WebhookEvent:
+    def _ignored(
+        self, delivery: str, slug: str, repo_id: str, api_base: str | None = None
+    ) -> WebhookEvent:
         return WebhookEvent(
             provider=self.provider, kind=EventKind.IGNORED, delivery_id=delivery,
             repo_slug=slug, repo_external_id=repo_id, pr_id="",
+            instance_api_base=api_base,
         )
 
     def _pid(self, pr: PullRequest) -> str:
         return quote(pr.repo_slug, safe="") if pr.repo_slug else pr.repo_external_id
 
+    @staticmethod
+    def _created_id(resp: Any) -> str:
+        """Extract the created object's id from a create response.
+
+        GitLab create endpoints return a JSON object. If a misconfigured
+        instance redirects and the body comes back as a list (e.g. a GET on a
+        collection), don't blow up with "'list' object has no attribute
+        'get'" — just return an empty ref. The comment/summary was still
+        delivered; only our local bookkeeping ref is unknown.
+        """
+        try:
+            body = resp.json()
+        except Exception:
+            return ""
+        return str(body.get("id", "")) if isinstance(body, dict) else ""
+
     async def fetch_pull_request(self, ev: WebhookEvent, token: str) -> PullRequest:
         pid = quote(ev.repo_slug, safe="") if ev.repo_slug else ev.repo_external_id
         r = await self._request(
-            "GET", f"/projects/{pid}/merge_requests/{ev.pr_id}", token, "get_pr"
+            "GET",
+            self._url(ev.instance_api_base, f"/projects/{pid}/merge_requests/{ev.pr_id}"),
+            token, "get_pr",
         )
         if r.status_code != 200:
             raise ProviderError("gitlab", "get_pr failed", r.status_code)
@@ -137,12 +179,17 @@ class GitLabProvider(HttpMixin):
             head_sha=refs.get("head_sha") or d.get("sha", ""),
             base_ref=d.get("target_branch", ""), head_ref=d.get("source_branch", ""),
             author=d.get("author", {}).get("username", ""),
+            instance_api_base=ev.instance_api_base,
         )
 
     async def fetch_diff(self, pr: PullRequest, token: str) -> list[FileChange]:
         # GitLab returns structured per-file diffs (already changed-only) — C2.
         r = await self._request(
-            "GET", f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/changes",
+            "GET",
+            self._url(
+                pr.instance_api_base,
+                f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/changes",
+            ),
             token, "get_diff",
         )
         if r.status_code != 200:
@@ -169,7 +216,10 @@ class GitLabProvider(HttpMixin):
 
         r = await self._request(
             "GET",
-            f"/projects/{self._pid(pr)}/repository/files/{_q(path, safe='')}/raw",
+            self._url(
+                pr.instance_api_base,
+                f"/projects/{self._pid(pr)}/repository/files/{_q(path, safe='')}/raw",
+            ),
             token, "get_file", params={"ref": pr.head_sha},
         )
         return r.text if r.status_code == 200 else None
@@ -187,38 +237,48 @@ class GitLabProvider(HttpMixin):
             }
         r = await self._request(
             "POST",
-            f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/discussions",
+            self._url(
+                pr.instance_api_base,
+                f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/discussions",
+            ),
             token,
             "post_inline_comment",
             json=payload,
         )
         if r.status_code not in (200, 201):
             raise ProviderError("gitlab", "post_inline_comment failed", r.status_code)
-        return str(r.json().get("id", ""))
+        return self._created_id(r)
 
     async def post_summary(self, pr: PullRequest, token: str, body: str) -> str:
         r = await self._request(
             "POST",
-            f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/notes",
+            self._url(
+                pr.instance_api_base,
+                f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/notes",
+            ),
             token,
             "post_summary",
             json={"body": body},
         )
         if r.status_code not in (200, 201):
             raise ProviderError("gitlab", "post_summary failed", r.status_code)
-        return str(r.json().get("id", ""))
+        return self._created_id(r)
 
     async def reply_in_thread(self, pr: PullRequest, token: str, thread_id: str, body: str) -> str:
         r = await self._request(
             "POST",
-            f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/discussions/{thread_id}/notes",
+            self._url(
+                pr.instance_api_base,
+                f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}"
+                f"/discussions/{thread_id}/notes",
+            ),
             token,
             "reply_in_thread",
             json={"body": body},
         )
         if r.status_code not in (200, 201):
             raise ProviderError("gitlab", "reply_in_thread failed", r.status_code)
-        return str(r.json().get("id", ""))
+        return self._created_id(r)
 
     async def set_status_check(
         self, pr: PullRequest, token: str, decision: MergePolicyDecision, url: str
@@ -231,7 +291,10 @@ class GitLabProvider(HttpMixin):
         }
         r = await self._request(
             "POST",
-            f"/projects/{self._pid(pr)}/statuses/{pr.head_sha}",
+            self._url(
+                pr.instance_api_base,
+                f"/projects/{self._pid(pr)}/statuses/{pr.head_sha}",
+            ),
             token,
             "set_status_check",
             json=payload,
@@ -245,7 +308,11 @@ class GitLabProvider(HttpMixin):
     async def get_thread(self, pr: PullRequest, token: str, thread_id: str) -> DiscussionThread:
         r = await self._request(
             "GET",
-            f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}/discussions/{thread_id}",
+            self._url(
+                pr.instance_api_base,
+                f"/projects/{self._pid(pr)}/merge_requests/{pr.pr_id}"
+                f"/discussions/{thread_id}",
+            ),
             token,
             "get_thread",
         )
@@ -256,7 +323,9 @@ class GitLabProvider(HttpMixin):
 
     async def get_default_branch(self, pr: PullRequest, token: str) -> str:
         r = await self._request(
-            "GET", f"/projects/{self._pid(pr)}", token, "get_repo"
+            "GET",
+            self._url(pr.instance_api_base, f"/projects/{self._pid(pr)}"),
+            token, "get_repo",
         )
         if r.status_code != 200:
             raise ProviderError("gitlab", "get_repo failed", r.status_code)
@@ -268,7 +337,10 @@ class GitLabProvider(HttpMixin):
         from urllib.parse import quote as _q
         r = await self._request(
             "POST",
-            f"/projects/{self._pid(pr)}/repository/branches",
+            self._url(
+                pr.instance_api_base,
+                f"/projects/{self._pid(pr)}/repository/branches",
+            ),
             token,
             "create_branch",
             json={"branch": new_branch, "ref": from_sha},
@@ -298,7 +370,10 @@ class GitLabProvider(HttpMixin):
         }
         r = await self._request(
             "POST",
-            f"/projects/{self._pid(pr)}/repository/files/{encoded}",
+            self._url(
+                pr.instance_api_base,
+                f"/projects/{self._pid(pr)}/repository/files/{encoded}",
+            ),
             token,
             "create_file",
             json=payload,
@@ -307,7 +382,10 @@ class GitLabProvider(HttpMixin):
             return
         r = await self._request(
             "PUT",
-            f"/projects/{self._pid(pr)}/repository/files/{encoded}",
+            self._url(
+                pr.instance_api_base,
+                f"/projects/{self._pid(pr)}/repository/files/{encoded}",
+            ),
             token,
             "update_file",
             json=payload,

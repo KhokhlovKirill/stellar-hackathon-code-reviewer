@@ -19,10 +19,16 @@ x-app: &app
   # (socat TCP4 -> smtp.mail.ru:465 over IPv6), needed because the hosting
   # provider blocks outbound SMTP/IPv6 from docker bridges. Keeping the hostname
   # as smtp.mail.ru preserves TLS SNI/certificate validation.
+  # host.docker.internal → host (LM Studio reverse tunnel, dev parity).
+  # smtp.mail.ru is pinned to the *aegis_default* bridge gateway (172.18.0.1),
+  # NOT docker's `host-gateway` (which is the docker0 bridge, 172.17.0.1):
+  # the api/worker containers live on aegis_default, and cross-bridge return
+  # traffic from a docker0-bound relay is dropped by the iptables FORWARD
+  # DROP policy. The host-side socat SMTP egress relay therefore binds
+  # 172.18.0.1:465 so request+response stay on the same bridge.
   extra_hosts:
     - "host.docker.internal:host-gateway"
-    - "mail.aegis-relay:host-gateway"
-    - "smtp.mail.ru:host-gateway"
+    - "smtp.mail.ru:172.18.0.1"
   restart: unless-stopped
 
 services:
@@ -97,3 +103,13 @@ services:
 volumes:
   aegis_pg:
   aegis_redis:
+
+# Pin the default bridge so the gateway IP is deterministic (172.18.0.1).
+# The SMTP egress relay and the `smtp.mail.ru` extra_hosts entry depend on
+# this address being stable across `docker compose up` cycles.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+          gateway: 172.18.0.1

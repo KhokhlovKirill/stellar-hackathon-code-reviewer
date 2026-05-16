@@ -110,6 +110,29 @@ class HttpMixin:
         t0 = time.monotonic()
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             resp = await client.request(method, full, headers=headers, **kw)
+            # httpx (like browsers) rewrites a redirected POST/PUT to GET on
+            # 301/302. Self-hosted GitLab commonly 301s http→https, which
+            # silently turns `set_status_check`/comment POSTs into GETs that
+            # 404 — surfacing as a spurious provider_error on an otherwise
+            # successful review. If a write was downgraded by a redirect,
+            # replay the original method against the final (post-redirect)
+            # URL, but only when it stayed on the same host (no auth leak)
+            # and the scheme didn't downgrade (https stays https).
+            if (
+                method.upper() not in ("GET", "HEAD")
+                and resp.history
+                and resp.request.method != method.upper()
+            ):
+                final = resp.url
+                origin = httpx.URL(full)
+                same_host = final.host == origin.host
+                no_scheme_downgrade = not (
+                    origin.scheme == "https" and final.scheme == "http"
+                )
+                if same_host and no_scheme_downgrade:
+                    resp = await client.request(
+                        method, str(final), headers=headers, **kw
+                    )
         dt = int((time.monotonic() - t0) * 1000)
         metrics.vcs_calls_total.labels(self.provider.value, op, str(resp.status_code)).inc()
         log.info(

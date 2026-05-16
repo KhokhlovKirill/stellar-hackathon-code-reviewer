@@ -4,7 +4,7 @@ import { Alert } from "../components/Alert";
 import { PrimaryButton, TextInput, FormField } from "../components/FormField";
 import { AegisLogo } from "../components/AegisLogo";
 import { useAuth } from "../context/AuthContext";
-import { ApiError } from "../lib/api";
+import { useSettings } from "../context/SettingsContext";
 
 function ShieldDecoration() {
   return (
@@ -45,6 +45,7 @@ const FEATURES = [
 
 export function LoginPage() {
   const { login } = useAuth();
+  const { localizeError } = useSettings();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -56,7 +57,7 @@ export function LoginPage() {
     try {
       await login(String(fd.get("email") ?? ""), String(fd.get("password") ?? ""));
     } catch (err) {
-      setError(err instanceof ApiError ? (err.detail ?? err.message) : "Ошибка входа");
+      setError(localizeError(err, "err.login_failed"));
     } finally {
       setPending(false);
     }

@@ -57,11 +57,17 @@ async def test_gitlab_inline_comment_and_status_payload(monkeypatch) -> None:  #
         "https://aegis/scan/1",
     )
 
-    assert calls[0]["args"][1] == "/projects/group%2Fapi/merge_requests/7/discussions"
+    # URLs are now absolute (per-call host resolution): a PR with no carried
+    # instance_api_base resolves to the default gitlab.com API root.
+    assert calls[0]["args"][1] == (
+        "https://gitlab.com/api/v4/projects/group%2Fapi/merge_requests/7/discussions"
+    )
     pos = calls[0]["kwargs"]["json"]["position"]
     assert pos["new_path"] == "app/db.py"
     assert pos["new_line"] == 42
-    assert calls[1]["args"][1] == "/projects/group%2Fapi/statuses/head"
+    assert calls[1]["args"][1] == (
+        "https://gitlab.com/api/v4/projects/group%2Fapi/statuses/head"
+    )
     assert calls[1]["kwargs"]["json"]["state"] == "failed"
 
 

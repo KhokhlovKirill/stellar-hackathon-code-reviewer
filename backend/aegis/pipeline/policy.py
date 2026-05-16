@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aegis.errors import ProviderError
 from aegis.obs import get_logger
 from aegis.pipeline.state import PipelineState
 from aegis.providers import get_provider
@@ -19,9 +20,31 @@ async def apply_merge_policy(state: PipelineState) -> None:
 
     provider = get_provider(state.ev.provider)
     target_url = f"https://aegis.local/scans/{state.scan_id}"
-    await provider.set_status_check(state.pr, state.ctx.access_token, decision, target_url)
-    if decision.block:
-        await provider.request_changes(state.pr, state.ctx.access_token, decision.reason)
+    # The status-check / request-changes calls run AFTER inline comments and the
+    # summary are already posted. A failure here (e.g. token lacks the
+    # commit-status scope, external statuses disabled, instance quirk) must NOT
+    # discard an otherwise-successful, already-published review by bubbling a
+    # ProviderError up to the orchestrator (which would mark the whole scan
+    # `provider_error`). Degrade gracefully instead.
+    try:
+        await provider.set_status_check(
+            state.pr, state.ctx.access_token, decision, target_url
+        )
+        if decision.block:
+            await provider.request_changes(
+                state.pr, state.ctx.access_token, decision.reason
+            )
+    except ProviderError as exc:
+        state.result.degraded.append("policy:status_check_failed")
+        log.warning(
+            "policy.status_check_failed",
+            scan_id=state.scan_id,
+            error=str(exc),
+            block=decision.block,
+            state=decision.state,
+        )
+        return
+
     log.info(
         "policy.applied",
         scan_id=state.scan_id,

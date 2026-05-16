@@ -247,7 +247,10 @@ async def _heartbeat_json_stream(
     alive. The body remains valid JSON because JSON parsers ignore leading
     whitespace.
     """
-    task: asyncio.Task[Any] = asyncio.create_task(factory())
+    async def _run() -> Any:
+        return await factory()
+
+    task: asyncio.Task[Any] = asyncio.create_task(_run())
     try:
         while not task.done():
             try:
@@ -324,16 +327,23 @@ def _repo_pr_url(repo: Repository, pr_number: int) -> str:
 
 
 async def _get_repo_access_token(repo: Repository) -> str | None:
-    """Fetch and decrypt the stored access_token for a repo."""
+    """Fetch and decrypt the most recent stored access_token for a repo.
+
+    Repos accumulate one access_token row per (re)connect; selecting with
+    scalar_one_or_none() raises MultipleResultsFound and 500s the caller
+    (project page / PR list). Always take the latest row instead.
+    """
     async with get_session() as session:
         secret = (
             await session.execute(
-                select(RepoSecret).where(
+                select(RepoSecret)
+                .where(
                     RepoSecret.repo_id == repo.id,
                     RepoSecret.kind == "access_token",
                 )
+                .order_by(RepoSecret.created_at.desc(), RepoSecret.id.desc())
             )
-        ).scalar_one_or_none()
+        ).scalars().first()
     if secret is None:
         return None
     try:
