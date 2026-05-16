@@ -47,7 +47,7 @@ function VSCodeMockup({ children }: { children: React.ReactNode }) {
 
 function MockWebDashboard() {
   return (
-    <div className="bg-[#020617] p-3 sm:p-4 text-[10px] sm:text-xs font-mono min-h-[260px] flex flex-col sm:flex-row gap-3">
+    <div className="bg-[#020617] p-3 sm:p-4 text-[10px] sm:text-xs font-mono min-h-[220px] sm:min-h-[260px] flex flex-col sm:flex-row gap-3 overflow-hidden">
       <div className="w-full sm:w-44 shrink-0 space-y-1">
         <div className="text-slate-500 text-[10px] uppercase tracking-wider mb-2 px-2">Проекты</div>
         {["backend-api", "mobile-app", "data-pipeline"].map((p, i) => (
@@ -87,13 +87,13 @@ function MockWebDashboard() {
 
 function MockVSCode() {
   return (
-    <div className="flex min-h-[260px]">
-      <div className="w-8 sm:w-10 bg-[#333333] flex flex-col items-center pt-3 gap-3 border-r border-black/30">
+    <div className="flex min-h-[220px] sm:min-h-[260px] overflow-hidden">
+      <div className="w-7 sm:w-10 bg-[#333333] flex flex-col items-center pt-3 gap-3 border-r border-black/30 shrink-0">
         {["M", "⬡", "🛡", "⚙"].map((icon, i) => (
           <div key={i} className={`text-xs w-6 h-6 flex items-center justify-center rounded ${i === 2 ? "text-white" : "text-slate-500"}`}>{icon}</div>
         ))}
       </div>
-      <div className="w-32 sm:w-52 bg-[#252526] border-r border-black/20 text-[9px] sm:text-[10px] font-mono">
+      <div className="w-28 sm:w-52 shrink-0 bg-[#252526] border-r border-black/20 text-[9px] sm:text-[10px] font-mono overflow-hidden">
         <div className="px-3 py-2 text-[9px] uppercase tracking-wider text-slate-500 border-b border-black/20">Aegis Security</div>
         <div className="px-2 py-1.5">
           <div className="text-slate-400 text-[9px] uppercase tracking-wider mb-1.5">Репозитории</div>
@@ -149,7 +149,7 @@ function MockVSCode() {
 
 function MockChatStream() {
   return (
-    <div className="bg-[#020617] p-4 text-xs font-mono min-h-[240px] flex flex-col gap-2">
+    <div className="bg-[#020617] p-3 sm:p-4 text-[11px] sm:text-xs font-mono min-h-[200px] sm:min-h-[240px] flex flex-col gap-2 overflow-hidden">
       <div className="flex gap-2 items-start">
         <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center text-[10px] shrink-0">U</div>
         <div className="bg-slate-800/60 rounded-xl px-3 py-2 text-slate-300 max-w-[80%]">
@@ -158,13 +158,13 @@ function MockChatStream() {
       </div>
       <div className="flex gap-2 items-start">
         <div className="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-[10px] shrink-0">⬡</div>
-        <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl px-3 py-2 text-slate-300 flex-1">
+        <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl px-3 py-2 text-slate-300 flex-1 min-w-0">
           <div className="text-indigo-400 text-[10px] mb-1">Aegis AI</div>
           Перенесите секрет в переменную окружения. Вот исправление:
-          <div className="mt-2 bg-slate-900 rounded-lg p-2 border border-slate-800">
-            <div className="text-green-400 text-[9px] mb-1">diff --git a/auth/jwt.py b/auth/jwt.py</div>
-            <div className="text-red-400">- SECRET = "hardcoded-key-123"</div>
-            <div className="text-green-400">+ SECRET = os.environ["JWT_SECRET"]</div>
+          <div className="mt-2 bg-slate-900 rounded-lg p-2 border border-slate-800 overflow-x-auto">
+            <div className="text-green-400 text-[9px] mb-1 whitespace-nowrap">diff --git a/auth/jwt.py b/auth/jwt.py</div>
+            <div className="text-red-400 whitespace-nowrap">- SECRET = "hardcoded-key-123"</div>
+            <div className="text-green-400 whitespace-nowrap">+ SECRET = os.environ["JWT_SECRET"]</div>
           </div>
           <div className="flex gap-2 mt-2">
             <div className="bg-indigo-600/30 text-indigo-300 rounded-md px-2 py-0.5 cursor-pointer">Применить патч</div>
@@ -178,7 +178,7 @@ function MockChatStream() {
 
 function MockScanSummary() {
   return (
-    <div className="bg-[#020617] p-4 text-xs font-mono min-h-[120px]">
+    <div className="bg-[#020617] p-3 sm:p-4 text-[11px] sm:text-xs font-mono min-h-[120px] overflow-hidden">
       <div className="flex items-center justify-between mb-3">
         <span className="text-slate-400 text-[11px] font-semibold">Итоги сканирования PR #47</span>
         <span className="text-emerald-400 text-[10px]">✓ завершено за 18 сек</span>
@@ -234,8 +234,8 @@ function FeatureCard({ icon, title, desc }: { icon: string; title: string; desc:
 function Stat({ value, label }: { value: string; label: string }) {
   return (
     <div className="text-center">
-      <div className="text-3xl font-black bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">{value}</div>
-      <div className="text-sm text-slate-500 dark:text-slate-400 mt-1">{label}</div>
+      <div className="text-2xl sm:text-3xl font-black bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">{value}</div>
+      <div className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">{label}</div>
     </div>
   );
 }
@@ -256,30 +256,30 @@ export function LandingPage() {
           <div className="absolute bottom-[-10%] right-[5%] w-[500px] h-[500px] rounded-full bg-violet-600/15 blur-[120px]" />
         </div>
 
-        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 py-12 sm:py-16 lg:py-24 w-full">
-          <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
+        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 py-10 sm:py-16 lg:py-24 w-full">
+          <div className="grid lg:grid-cols-2 gap-8 sm:gap-10 lg:gap-16 items-center">
             <div>
               <div className="inline-flex items-center gap-2 bg-indigo-500/10 border border-indigo-500/20 rounded-full px-4 py-1.5 text-sm text-indigo-400 mb-6">
                 <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
                 AI-ревью безопасности кода
               </div>
 
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] tracking-tight text-slate-900 dark:text-white mb-6">
+              <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black leading-[1.1] tracking-tight text-slate-900 dark:text-white mb-4 sm:mb-6">
                 Находи уязвимости{" "}
                 <span className="bg-gradient-to-r from-indigo-400 via-violet-400 to-indigo-500 bg-clip-text text-transparent">
                   до ревью
                 </span>
               </h1>
 
-              <p className="text-base sm:text-lg lg:text-xl text-slate-500 dark:text-slate-400 leading-relaxed mb-8 max-w-lg">
+              <p className="text-sm sm:text-lg lg:text-xl text-slate-500 dark:text-slate-400 leading-relaxed mb-6 sm:mb-8 max-w-lg">
                 Aegis анализирует pull request'ы с помощью ансамбля языковых моделей, находит SQL-инъекции, XSS, захардкоженные ключи и 50+ классов уязвимостей — прямо в VS Code или в браузере.
               </p>
 
               <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
                 <a
-href="/aegis-security-0.2.0.vsix"
+                  href="/aegis-security-0.2.0.vsix"
                   download
-                  className="inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-base transition-all shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-6 py-3 sm:py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm sm:text-base transition-all shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
                 >
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -290,21 +290,21 @@ href="/aegis-security-0.2.0.vsix"
                 {user ? (
                   <Link
                     to="/dashboard"
-                    className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-semibold text-base transition-all hover:-translate-y-0.5"
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 sm:py-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-semibold text-sm sm:text-base transition-all hover:-translate-y-0.5"
                   >
                     Открыть дашборд
                   </Link>
                 ) : (
                   <Link
                     to="/register"
-                    className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-semibold text-base transition-all hover:-translate-y-0.5"
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 sm:py-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-semibold text-sm sm:text-base transition-all hover:-translate-y-0.5"
                   >
                     Попробовать
                   </Link>
                 )}
               </div>
 
-              <div className="mt-10 flex flex-wrap gap-4 text-xs text-slate-500 dark:text-slate-500">
+              <div className="mt-8 sm:mt-10 flex flex-wrap gap-x-4 gap-y-2 text-[11px] sm:text-xs text-slate-500 dark:text-slate-500">
                 {["CWE Top 25 покрыт", "OWASP Top 10", "Ансамбль языковых моделей", "Self-hosted"].map((t) => (
                   <div key={t} className="flex items-center gap-1.5">
                     <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -345,7 +345,7 @@ href="/aegis-security-0.2.0.vsix"
                   </VSCodeMockup>
                 )}
 
-                <div className="absolute -bottom-3 right-2 sm:-bottom-4 sm:-right-4 bg-emerald-500 text-white text-[11px] sm:text-xs font-bold px-3 py-1.5 rounded-full shadow-lg shadow-emerald-500/30">
+                <div className="absolute -bottom-3 right-2 sm:-bottom-4 sm:-right-4 bg-emerald-500 text-white text-[10px] sm:text-xs font-bold px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full shadow-lg shadow-emerald-500/30 whitespace-nowrap">
                   3 уязвимости найдено
                 </div>
               </div>
@@ -356,7 +356,7 @@ href="/aegis-security-0.2.0.vsix"
 
       {/* ── Stats bar ────────────────────────────────────────────────────────── */}
       <section className="border-y border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
-        <div className="mx-auto max-w-5xl px-4 py-10 grid grid-cols-2 sm:grid-cols-4 gap-6">
+        <div className="mx-auto max-w-5xl px-4 py-6 sm:py-10 grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-6">
           <Stat value="50+" label="классов уязвимостей" />
           <Stat value="3" label="модели в ансамбле" />
           <Stat value="&lt;30 с" label="время сканирования" />
@@ -365,15 +365,15 @@ href="/aegis-security-0.2.0.vsix"
       </section>
 
       {/* ── How it works ─────────────────────────────────────────────────────── */}
-      <section className="py-14 sm:py-20 lg:py-24 mx-auto max-w-7xl px-4 sm:px-6">
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 rounded-full px-4 py-1.5 text-sm text-violet-400 mb-4">
+      <section className="py-12 sm:py-20 lg:py-24 mx-auto max-w-7xl px-4 sm:px-6">
+        <div className="text-center mb-10 sm:mb-16">
+          <div className="inline-flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 rounded-full px-4 py-1.5 text-xs sm:text-sm text-violet-400 mb-4">
             Как это работает
           </div>
-          <h2 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white">От кода до исправления за минуту</h2>
+          <h2 className="text-2xl sm:text-4xl font-black text-slate-900 dark:text-white">От кода до исправления за минуту</h2>
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-start">
+        <div className="grid lg:grid-cols-2 gap-8 sm:gap-10 lg:gap-16 items-start">
           <div className="space-y-0">
             <Step n={1} icon="🔐" title="Войди и подключи репозиторий"
               desc="Зарегистрируйся на веб-платформе или установи расширение VS Code. Подключи GitHub-репозиторий — Aegis увидит все ветки и запросы на слияние." />
@@ -397,11 +397,11 @@ href="/aegis-security-0.2.0.vsix"
       </section>
 
       {/* ── Product split ────────────────────────────────────────────────────── */}
-      <section className="py-14 sm:py-20 lg:py-24 bg-slate-50 dark:bg-slate-950/50">
+      <section className="py-12 sm:py-20 lg:py-24 bg-slate-50 dark:bg-slate-950/50">
         <div className="mx-auto max-w-7xl px-4 sm:px-6">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white mb-3">Два продукта, одна экосистема</h2>
-            <p className="text-slate-500 dark:text-slate-400 text-lg max-w-2xl mx-auto">
+          <div className="text-center mb-10 sm:mb-16">
+            <h2 className="text-2xl sm:text-4xl font-black text-slate-900 dark:text-white mb-3">Два продукта, одна экосистема</h2>
+            <p className="text-slate-500 dark:text-slate-400 text-sm sm:text-lg max-w-2xl mx-auto">
               Веб-платформа и расширение VS Code синхронизированы — сканируй где удобно, смотри результаты везде.
             </p>
           </div>
@@ -484,10 +484,10 @@ href="/aegis-security-0.2.0.vsix"
       </section>
 
       {/* ── Full workflow ─────────────────────────────────────────────────────── */}
-      <section className="py-14 sm:py-20 lg:py-24 mx-auto max-w-7xl px-4 sm:px-6">
-        <div className="text-center mb-12">
-          <h2 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white mb-3">Полный процесс в VS Code</h2>
-          <p className="text-slate-500 dark:text-slate-400">От открытия запроса на слияние до применённого патча — без выхода из редактора</p>
+      <section className="py-12 sm:py-20 lg:py-24 mx-auto max-w-7xl px-4 sm:px-6">
+        <div className="text-center mb-8 sm:mb-12">
+          <h2 className="text-2xl sm:text-4xl font-black text-slate-900 dark:text-white mb-3">Полный процесс в VS Code</h2>
+          <p className="text-sm sm:text-base text-slate-500 dark:text-slate-400">От открытия запроса на слияние до применённого патча — без выхода из редактора</p>
         </div>
 
         <VSCodeMockup>
@@ -531,24 +531,24 @@ href="/aegis-security-0.2.0.vsix"
       </section>
 
       {/* ── Final CTA ────────────────────────────────────────────────────────── */}
-      <section className="py-14 sm:py-20 lg:py-24 relative overflow-hidden">
+      <section className="py-12 sm:py-20 lg:py-24 relative overflow-hidden">
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute inset-0 bg-gradient-to-r from-indigo-600/10 via-violet-600/10 to-indigo-600/10" />
         </div>
         <div className="relative mx-auto max-w-3xl px-4 text-center">
           <AegisLogo size={56} className="mx-auto mb-6" />
-          <h2 className="text-3xl sm:text-5xl font-black text-slate-900 dark:text-white mb-4">
+          <h2 className="text-2xl sm:text-5xl font-black text-slate-900 dark:text-white mb-4">
             Начни сканировать<br />
             <span className="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">уже сегодня</span>
           </h2>
-          <p className="text-lg text-slate-500 dark:text-slate-400 mb-10">
+          <p className="text-sm sm:text-lg text-slate-500 dark:text-slate-400 mb-8 sm:mb-10">
             Ансамбль языковых моделей анализирует код и предлагает точные исправления.
           </p>
-          <div className="flex flex-col sm:flex-row sm:flex-wrap justify-center gap-4">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap justify-center gap-3 sm:gap-4">
             <a
-href="/aegis-security-0.2.0.vsix"
+              href="/aegis-security-0.2.0.vsix"
               download
-              className="inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-lg transition-all shadow-2xl shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-6 sm:px-8 py-3.5 sm:py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-base sm:text-lg transition-all shadow-2xl shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -558,14 +558,14 @@ href="/aegis-security-0.2.0.vsix"
             {user ? (
               <Link
                 to="/dashboard"
-                className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-bold text-lg transition-all hover:-translate-y-0.5"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 sm:px-8 py-3.5 sm:py-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-bold text-base sm:text-lg transition-all hover:-translate-y-0.5"
               >
                 Перейти в дашборд
               </Link>
             ) : (
               <Link
                 to="/register"
-                className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-bold text-lg transition-all hover:-translate-y-0.5"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 sm:px-8 py-3.5 sm:py-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-bold text-base sm:text-lg transition-all hover:-translate-y-0.5"
               >
                 Зарегистрироваться
               </Link>

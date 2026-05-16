@@ -37,6 +37,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))  # pbkdf2: salt$hash
     display_name: Mapped[str] = mapped_column(String(128), default="")
+    language: Mapped[str] = mapped_column(String(8), default="ru", server_default="ru")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     projects: Mapped[list[Project]] = relationship(back_populates="owner")

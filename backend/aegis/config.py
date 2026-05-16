@@ -45,6 +45,17 @@ class Settings(BaseSettings):
     admin_user: str = Field("admin", alias="AEGIS_ADMIN_USER")
     admin_password: str = Field("", alias="AEGIS_ADMIN_PASSWORD")
 
+    smtp_host: str = Field("", alias="AEGIS_SMTP_HOST")
+    smtp_port: int = Field(465, alias="AEGIS_SMTP_PORT")
+    smtp_user: str = Field("", alias="AEGIS_SMTP_USER")
+    smtp_password: str = Field("", alias="AEGIS_SMTP_PASSWORD")
+    smtp_from: str = Field("", alias="AEGIS_SMTP_FROM")
+    smtp_security: Literal["ssl", "starttls", "none"] = Field(
+        "ssl",
+        alias="AEGIS_SMTP_SECURITY",
+    )
+    public_url: str = Field("https://aegis.khokhlovkirill.ru", alias="AEGIS_PUBLIC_URL")
+
     github_webhook_secret: str = Field("", alias="AEGIS_GITHUB_WEBHOOK_SECRET")
     gitlab_webhook_secret: str = Field("", alias="AEGIS_GITLAB_WEBHOOK_SECRET")
     # Self-hosted GitLab base URL (e.g. https://git.khokhlovkirill.ru). Used

@@ -6,6 +6,8 @@ import { getPRDetailWebviewContent } from "./prDetailView";
 interface ChatContext {
   finding?: Finding;
   scanResult?: ScanResult;
+  initialMessage?: string;
+  lang?: "ru" | "en";
 }
 
 export class PanelManager {
@@ -38,6 +40,12 @@ export class PanelManager {
           scan: chatContext.scanResult,
         });
       }
+      if (chatContext?.initialMessage) {
+        this.chatPanel.webview.postMessage({
+          type: "sendInitial",
+          text: chatContext.initialMessage,
+        });
+      }
       return this.chatPanel;
     }
 
@@ -58,7 +66,9 @@ export class PanelManager {
       panel.webview,
       this.context.extensionUri,
       chatContext?.finding,
-      chatContext?.scanResult
+      chatContext?.scanResult,
+      chatContext?.initialMessage,
+      chatContext?.lang ?? "ru"
     );
 
     panel.webview.onDidReceiveMessage(

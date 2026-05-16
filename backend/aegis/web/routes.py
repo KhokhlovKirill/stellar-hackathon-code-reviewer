@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -93,6 +93,7 @@ async def register_form(request: Request) -> HTMLResponse:
 @router.post("/register")
 async def register_submit(
     request: Request,
+    background_tasks: BackgroundTasks,
     email: str = Form(...),
     password: str = Form(...),
     display_name: str = Form(""),
@@ -110,12 +111,21 @@ async def register_submit(
         if dup is not None:
             return _page(request, "register.html",
                          error="That email is already registered.")
+        resolved_display = display_name.strip() or email.split("@")[0]
         s.add(User(
             email=email,
             password_hash=hash_password(password),
-            display_name=display_name.strip() or email.split("@")[0],
+            display_name=resolved_display,
         ))
     log.info("web.user_registered", email=email)
+    # Run after the redirect is sent; SMTP failures are logged inside the mailer.
+    from aegis.api.mailer import send_welcome_email
+
+    background_tasks.add_task(
+        send_welcome_email,
+        to_email=email,
+        user_name=resolved_display,
+    )
     return _set_session(RedirectResponse("/dashboard", status_code=303), email)
 
 
@@ -567,6 +577,40 @@ class _WebChatRequest(BaseModel):
     message: str
     history: list[_WebChatHistoryItem] = []
     lang: str = "ru"
+
+
+class _PrefsUpdate(BaseModel):
+    language: str | None = None
+
+
+@router.get("/api/web/me/preferences")
+async def web_get_preferences(user: User = _user_web) -> dict[str, Any]:
+    return {
+        "email": user.email,
+        "display_name": user.display_name or "",
+        "language": (user.language or "ru"),
+    }
+
+
+@router.put("/api/web/me/preferences")
+async def web_update_preferences(
+    req: _PrefsUpdate, user: User = _user_web
+) -> dict[str, Any]:
+    if req.language is not None:
+        if req.language not in ("ru", "en"):
+            return {"error": "language must be 'ru' or 'en'"}
+        async with get_session() as session:
+            row = (
+                await session.execute(select(User).where(User.id == user.id))
+            ).scalar_one()
+            row.language = req.language
+            await session.flush()
+            user = row
+    return {
+        "email": user.email,
+        "display_name": user.display_name or "",
+        "language": (user.language or "ru"),
+    }
 
 
 @router.post("/api/web/chat/stream")

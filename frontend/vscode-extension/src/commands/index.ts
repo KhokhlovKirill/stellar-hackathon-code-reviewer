@@ -645,19 +645,14 @@ export function registerAllCommands(deps: CommandDeps): vscode.Disposable[] {
       ) => {
         const scanContext = scanArg ?? currentScan.value ?? undefined;
         const panel = panelManager.getOrCreateChatPanel(
-          { finding: findingArg, scanResult: scanContext },
+          {
+            finding: findingArg,
+            scanResult: scanContext,
+            initialMessage,
+            lang: getLanguage(),
+          },
           (msg) => handleChatMessage(msg, deps, findingArg, scanContext)
         );
-
-        if (findingArg) {
-          panel.webview.postMessage({ type: "setFinding", finding: findingArg });
-        }
-        if (scanContext) {
-          panel.webview.postMessage({ type: "setScan", scan: scanContext });
-        }
-        if (initialMessage) {
-          panel.webview.postMessage({ type: "sendInitial", text: initialMessage });
-        }
         panel.reveal(vscode.ViewColumn.Beside, false);
       }
     )

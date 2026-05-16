@@ -9,7 +9,7 @@ from typing import Any, cast
 from urllib.parse import quote, urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
@@ -128,20 +128,29 @@ class ChatApiResponse(BaseModel):
 
 
 @router.post("/auth/register", response_model=LoginResponse, status_code=201)
-async def register(req: RegisterRequest) -> LoginResponse:
+async def register(req: RegisterRequest, background_tasks: BackgroundTasks) -> LoginResponse:
     async with get_session() as session:
         dup = (
             await session.execute(select(User.id).where(User.email == req.email))
         ).scalar_one_or_none()
         if dup is not None:
             raise HTTPException(status_code=409, detail="email already registered")
+        display_name = req.display_name or req.email.split("@")[0]
         user = User(
             email=req.email,
             password_hash=hash_password(req.password),
-            display_name=req.display_name or req.email.split("@")[0],
+            display_name=display_name,
         )
         session.add(user)
         await session.flush()
+    # Run after the response is sent; SMTP failures are logged inside the mailer.
+    from aegis.api.mailer import send_welcome_email
+
+    background_tasks.add_task(
+        send_welcome_email,
+        to_email=req.email,
+        user_name=display_name,
+    )
     return LoginResponse(access_token=issue_token(req.email))
 
 

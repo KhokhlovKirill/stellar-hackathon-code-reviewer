@@ -150,32 +150,6 @@ function ThemeOption({
   );
 }
 
-// ── Model badge ───────────────────────────────────────────────────────────────
-
-function ModelBadge({
-  name,
-  role,
-  provider,
-  color,
-}: {
-  name: string;
-  role: string;
-  provider: string;
-  color: string;
-}) {
-  return (
-    <div className={`flex items-start gap-3 p-4 rounded-xl border ${color}`}>
-      <div className="flex-1 min-w-0">
-        <div className="font-semibold text-sm text-slate-900 dark:text-white truncate">{name}</div>
-        <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{role}</div>
-      </div>
-      <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 shrink-0">
-        {provider}
-      </span>
-    </div>
-  );
-}
-
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
@@ -228,8 +202,8 @@ function SettingsContent() {
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
             {isRu
-              ? "Язык интерфейса, тема оформления и конфигурация AI-моделей"
-              : "Interface language, color theme and AI model configuration"}
+              ? "Язык интерфейса и тема оформления"
+              : "Interface language and color theme"}
           </p>
         </div>
       </div>
@@ -310,52 +284,6 @@ function SettingsContent() {
         </div>
       </Section>
 
-      {/* AI models */}
-      <Section
-        icon={
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2h-2" />
-          </svg>
-        }
-        title={isRu ? "AI-модели" : "AI models"}
-        desc={
-          isRu
-            ? "Ансамбль из трёх языковых моделей: два детектора ищут уязвимости параллельно, судья оценивает и объединяет результаты."
-            : "An ensemble of three language models: two detectors search for vulnerabilities in parallel, a judge evaluates and merges the results."
-        }
-      >
-        <div className="space-y-2">
-          <ModelBadge
-            name="DeepSeek V4 Flash"
-            role={isRu ? "Детектор A — анализ уязвимостей" : "Detector A — vulnerability analysis"}
-            provider="OpenRouter"
-            color="bg-violet-50 dark:bg-violet-500/5 border-violet-200 dark:border-violet-500/20"
-          />
-          <ModelBadge
-            name="MiMo-V2-Flash"
-            role={isRu ? "Детектор B — перекрёстная проверка" : "Detector B — cross-check"}
-            provider="OpenRouter"
-            color="bg-pink-50 dark:bg-pink-500/5 border-pink-200 dark:border-pink-500/20"
-          />
-          <ModelBadge
-            name="MiMo-V2-Flash"
-            role={isRu ? "Судья — итоговая оценка и ранжирование" : "Judge — final scoring and ranking"}
-            provider="OpenRouter"
-            color="bg-amber-50 dark:bg-amber-500/5 border-amber-200 dark:border-amber-500/20"
-          />
-        </div>
-
-        <div className="mt-4 flex items-start gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
-          <svg className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-            {isRu
-              ? "Модели выбираются автоматически из конфигурации сервера. Смена моделей доступна через переменные окружения на стороне backend."
-              : "Models are selected automatically from the server configuration. Changing models is available via environment variables on the backend."}
-          </p>
-        </div>
-      </Section>
     </div>
   );
 }

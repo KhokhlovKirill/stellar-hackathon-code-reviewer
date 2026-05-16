@@ -136,6 +136,32 @@ export class AegisClient {
     });
   }
 
+  async getMyPreferences(): Promise<{
+    email: string;
+    display_name: string;
+    language: "ru" | "en";
+  }> {
+    return this.fetch(
+      "GET",
+      "/api/ext/me/preferences",
+      undefined,
+      true
+    );
+  }
+
+  async updateMyPreferences(language: "ru" | "en"): Promise<{
+    email: string;
+    display_name: string;
+    language: "ru" | "en";
+  }> {
+    return this.fetch(
+      "PUT",
+      "/api/ext/me/preferences",
+      { language },
+      true
+    );
+  }
+
   async getRepos(): Promise<RepoInfo[]> {
     return this.fetch<RepoInfo[]>("GET", "/api/ext/repos", undefined, true);
   }
@@ -167,17 +193,90 @@ export class AegisClient {
     );
   }
 
+  /**
+   * POST a long-running scan request. The server streams whitespace
+   * heartbeats (every ~5s) while the LLM ensemble runs so intermediate
+   * NATs/proxies don't drop the connection. Body is valid JSON with optional
+   * leading whitespace; on error the body contains `{error, status}`.
+   */
+  private async streamScan<T>(
+    path: string,
+    body: unknown,
+    auth: boolean
+  ): Promise<T> {
+    const url = `${this.baseUrl}${path}`;
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: this.defaultHeaders(auth),
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      const cause = (err as { cause?: unknown }).cause;
+      const causeStr = cause ? `: ${String(cause)}` : "";
+      throw new Error(`Network error calling ${url}: ${err}${causeStr}`);
+    }
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        const errBody = (await response.json()) as { detail?: string };
+        detail = errBody.detail ?? detail;
+      } catch {
+        /* ignore */
+      }
+      if (response.status === 401 && auth && this.onUnauthorized) {
+        await this.onUnauthorized();
+        throw new Error("Authentication expired. Sign in to Aegis again.");
+      }
+      throw new Error(`Aegis API error ${response.status}: ${detail}`);
+    }
+    if (!response.body) {
+      // Fallback when the runtime doesn't expose a stream — just await text.
+      const txt = await response.text();
+      return this.parseScanBody<T>(txt);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+    }
+    buf += decoder.decode();
+    return this.parseScanBody<T>(buf);
+  }
+
+  private parseScanBody<T>(raw: string): T {
+    const trimmed = raw.replace(/^[\s ]+/, "");
+    if (!trimmed) {
+      throw new Error("Aegis: empty scan response (connection may have dropped)");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (err) {
+      throw new Error(`Aegis: malformed scan response: ${err}`);
+    }
+    if (parsed && typeof parsed === "object" && "error" in parsed) {
+      const err = parsed as { error?: string; status?: number };
+      const status = err.status ?? 500;
+      throw new Error(`Aegis API error ${status}: ${err.error ?? "unknown error"}`);
+    }
+    return parsed as T;
+  }
+
   async scanUrl(url: string, token?: string): Promise<ScanResult> {
-    return this.fetch<ScanResult>("POST", "/api/ext/scan/url", {
+    return this.streamScan<ScanResult>("/api/ext/scan/url", {
       url,
       token: token ?? null,
       lang: this.language,
-    });
+    }, false);
   }
 
   async scanPR(repoId: number, prNumber: number): Promise<ScanResult> {
-    return this.fetch<ScanResult>(
-      "POST",
+    return this.streamScan<ScanResult>(
       "/api/ext/scan/pr",
       { repo_id: repoId, pr_number: prNumber, lang: this.language },
       true
@@ -185,8 +284,7 @@ export class AegisClient {
   }
 
   async scanRepo(repoId: number): Promise<ScanResult> {
-    return this.fetch<ScanResult>(
-      "POST",
+    return this.streamScan<ScanResult>(
       "/api/ext/scan/repo",
       { repo_id: repoId, lang: this.language },
       true
@@ -198,12 +296,12 @@ export class AegisClient {
     repoSlug: string,
     ref: string
   ): Promise<ScanResult> {
-    return this.fetch<ScanResult>("POST", "/api/ext/scan/branch", {
+    return this.streamScan<ScanResult>("/api/ext/scan/branch", {
       diff,
       repo_slug: repoSlug,
       ref,
       lang: this.language,
-    });
+    }, false);
   }
 
   async chat(

@@ -5,10 +5,11 @@ Prefix: /api/ext
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
@@ -231,6 +232,52 @@ def _scan_summary_from_row(s: Scan) -> ScanSummaryOut:
         files_scanned=files_scanned_count,
         degraded=degraded_val,
     )
+
+
+_HEARTBEAT_INTERVAL_S = 5.0
+
+
+async def _heartbeat_json_stream(
+    factory: Callable[[], Awaitable[Any]],
+) -> AsyncIterator[bytes]:
+    """Run a long-running scan in the background while streaming JSON whitespace
+    every few seconds. Intermediate routers/NATs drop idle TCP connections
+    after 30-60s, so a 60-120s LLM scan that holds the request open will see
+    "fetch failed" on the client. A trickle of bytes keeps the connection
+    alive. The body remains valid JSON because JSON parsers ignore leading
+    whitespace.
+    """
+    task: asyncio.Task[Any] = asyncio.create_task(factory())
+    try:
+        while not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=_HEARTBEAT_INTERVAL_S)
+            except TimeoutError:
+                yield b" "
+        try:
+            result = task.result()
+        except HTTPException as exc:
+            payload = {
+                "error": exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+                "status": exc.status_code,
+            }
+            yield json.dumps(payload, ensure_ascii=False).encode()
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.exception("scan.stream_failed", error=str(exc))
+            yield json.dumps(
+                {"error": f"scan failed: {exc}", "status": 500}, ensure_ascii=False
+            ).encode()
+            return
+        if hasattr(result, "model_dump_json"):
+            yield result.model_dump_json().encode()
+        else:
+            yield json.dumps(result, ensure_ascii=False, default=str).encode()
+    finally:
+        if not task.done():
+            task.cancel()
 
 
 def _engine_to_pref(engine: str | None) -> bool | None:
@@ -639,13 +686,56 @@ async def _scan_registered_repo_response(
 
 
 # ---------------------------------------------------------------------------
+# GET / PUT /api/ext/me/preferences
+# ---------------------------------------------------------------------------
+
+
+class UserPrefsOut(BaseModel):
+    email: str
+    display_name: str
+    language: str
+
+
+class UserPrefsUpdate(BaseModel):
+    language: str | None = None
+
+
+@router.get("/me/preferences", response_model=UserPrefsOut)
+async def get_my_preferences(user: User = _user_dep) -> UserPrefsOut:
+    return UserPrefsOut(
+        email=user.email,
+        display_name=user.display_name or "",
+        language=(user.language or "ru"),
+    )
+
+
+@router.put("/me/preferences", response_model=UserPrefsOut)
+async def update_my_preferences(
+    req: UserPrefsUpdate, user: User = _user_dep
+) -> UserPrefsOut:
+    if req.language is not None:
+        if req.language not in ("ru", "en"):
+            raise HTTPException(status_code=422, detail="language must be 'ru' or 'en'")
+        async with get_session() as session:
+            row = (
+                await session.execute(select(User).where(User.id == user.id))
+            ).scalar_one()
+            row.language = req.language
+            await session.flush()
+            user = row
+    return UserPrefsOut(
+        email=user.email,
+        display_name=user.display_name or "",
+        language=(user.language or "ru"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # POST /api/ext/scan/url
 # ---------------------------------------------------------------------------
 
 
-@router.post("/scan/url", response_model=ScanUrlResponse)
-async def scan_url(req: ScanUrlRequest) -> ScanUrlResponse:
-    """Scan a GitHub PR URL. No auth required."""
+async def _do_scan_url(req: ScanUrlRequest) -> ScanUrlResponse:
     from aegis.pipeline.simple_scan import _parse_repo_url
 
     result = await run_scan(
@@ -673,6 +763,18 @@ async def scan_url(req: ScanUrlRequest) -> ScanUrlResponse:
     )
 
     return _scan_response(scan_id, result)
+
+
+@router.post("/scan/url")
+async def scan_url(req: ScanUrlRequest) -> StreamingResponse:
+    """Scan a GitHub PR URL. No auth required. Streams whitespace heartbeats
+    while the LLM ensemble runs so intermediate proxies don't drop the
+    connection (60-120s scans frequently exceed NAT idle timeouts)."""
+    return StreamingResponse(
+        _heartbeat_json_stream(lambda: _do_scan_url(req)),
+        media_type="application/json",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1155,9 +1257,12 @@ class ScanRepoRequest(BaseModel):
     lang: str = "ru"
 
 
-@router.post("/scan/pr", response_model=ScanUrlResponse)
-async def scan_pr(req: ScanPRRequest, user: User = _user_dep) -> ScanUrlResponse:
-    """Scan a registered PR using the stored repo access token. Auth required."""
+@router.post("/scan/pr")
+async def scan_pr(
+    req: ScanPRRequest, user: User = _user_dep
+) -> StreamingResponse:
+    """Scan a registered PR using the stored repo access token. Auth required.
+    Streams whitespace heartbeats during the scan (see /scan/url for rationale)."""
     async with get_session() as session:
         repo = (
             await session.execute(
@@ -1178,18 +1283,26 @@ async def scan_pr(req: ScanPRRequest, user: User = _user_dep) -> ScanUrlResponse
                 raise HTTPException(status_code=404, detail="repo not found")
 
     access_token = await _get_repo_access_token(repo)
-    return await _scan_registered_pr_response(
-        repo,
-        req.pr_number,
-        access_token,
-        req.lang,
-        getattr(req, "engine", "auto"),
+    pr_number = req.pr_number
+    lang = req.lang
+    engine = getattr(req, "engine", "auto")
+    return StreamingResponse(
+        _heartbeat_json_stream(
+            lambda: _scan_registered_pr_response(
+                repo, pr_number, access_token, lang, engine
+            )
+        ),
+        media_type="application/json",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
     )
 
 
-@router.post("/scan/repo", response_model=ScanUrlResponse)
-async def scan_repo(req: ScanRepoRequest, user: User = _user_dep) -> ScanUrlResponse:
-    """Scan the default branch of a registered GitHub/GitLab repository."""
+@router.post("/scan/repo")
+async def scan_repo(
+    req: ScanRepoRequest, user: User = _user_dep
+) -> StreamingResponse:
+    """Scan the default branch of a registered repo. Streams heartbeats during
+    the scan (see /scan/url for rationale)."""
     async with get_session() as session:
         repo = (
             await session.execute(
@@ -1208,10 +1321,14 @@ async def scan_repo(req: ScanRepoRequest, user: User = _user_dep) -> ScanUrlResp
             if project is None or project.owner_id != user.id:
                 raise HTTPException(status_code=404, detail="repo not found")
 
-    return await _scan_registered_repo_response(
-        repo,
-        await _get_repo_access_token(repo),
-        req.lang,
+    access_token = await _get_repo_access_token(repo)
+    lang = req.lang
+    return StreamingResponse(
+        _heartbeat_json_stream(
+            lambda: _scan_registered_repo_response(repo, access_token, lang)
+        ),
+        media_type="application/json",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
     )
 
 
@@ -1220,9 +1337,7 @@ async def scan_repo(req: ScanRepoRequest, user: User = _user_dep) -> ScanUrlResp
 # ---------------------------------------------------------------------------
 
 
-@router.post("/scan/branch", response_model=ScanUrlResponse)
-async def scan_branch(req: ScanBranchRequest) -> ScanUrlResponse:
-    """Scan a raw unified diff (current branch). No auth required."""
+async def _do_scan_branch(req: ScanBranchRequest) -> ScanUrlResponse:
     from aegis.pipeline.deterministic.secrets import scan_secrets
     from aegis.pipeline.simple_scan import _generate_scan_review, _run_llm
     from aegis.providers.diffparse import parse_unified_diff
@@ -1309,6 +1424,17 @@ async def scan_branch(req: ScanBranchRequest) -> ScanUrlResponse:
         degraded=bool(degraded_reasons),
         findings=findings_out,
         summary=summary,
+    )
+
+
+@router.post("/scan/branch")
+async def scan_branch(req: ScanBranchRequest) -> StreamingResponse:
+    """Scan a raw unified diff (current branch). Streams heartbeats while the
+    LLM ensemble runs (see /scan/url for rationale)."""
+    return StreamingResponse(
+        _heartbeat_json_stream(lambda: _do_scan_branch(req)),
+        media_type="application/json",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
     )
 
 

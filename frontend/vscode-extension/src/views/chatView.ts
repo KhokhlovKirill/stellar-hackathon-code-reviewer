@@ -54,7 +54,9 @@ export function getChatWebviewContent(
   webview: vscode.Webview,
   _extensionUri: vscode.Uri,
   finding?: Finding,
-  scan?: ScanResult
+  scan?: ScanResult,
+  initialMessage?: string,
+  lang: "ru" | "en" = "ru"
 ): string {
   const nonce = Math.random().toString(36).slice(2);
   // connect-src needs to include the backend URL — we allow any http(s) origin
@@ -62,6 +64,25 @@ export function getChatWebviewContent(
 
   const initialFindingJson = finding ? JSON.stringify(finding) : "null";
   const initialScanJson = scan ? JSON.stringify(scan) : "null";
+  const initialMessageJson = initialMessage ? JSON.stringify(initialMessage) : "null";
+  const isRu = lang === "ru";
+  const L = {
+    askFinding: isRu ? "Спросите Aegis об этой находке" : "Ask Aegis about this finding",
+    askScan: isRu ? "Спросите Aegis об этом pull request" : "Ask Aegis about this pull request",
+    askGeneral: isRu ? "Задайте вопрос Aegis по безопасности" : "Ask Aegis a security question",
+    placeholderFinding: isRu ? "Спросить про эту находку… (Enter — отправить, Shift+Enter — новая строка)" : "Ask about this finding… (Enter to send, Shift+Enter for newline)",
+    placeholderScan: isRu ? "Спросить про этот pull request… (Enter — отправить, Shift+Enter — новая строка)" : "Ask about this pull request… (Enter to send, Shift+Enter for newline)",
+    placeholderGeneral: isRu ? "Задайте вопрос по безопасности… (Enter — отправить, Shift+Enter — новая строка)" : "Ask a security question… (Enter to send, Shift+Enter for newline)",
+    clear: isRu ? "Очистить" : "Clear",
+    send: isRu ? "Отправить" : "Send",
+    hint: isRu ? "Enter — отправить · Shift+Enter — новая строка" : "Enter to send · Shift+Enter for newline",
+    you: isRu ? "Вы" : "You",
+    aegis: "Aegis",
+    proposedPatch: isRu ? "Предложенный патч" : "Proposed patch",
+    applyPatch: isRu ? "Применить патч" : "Apply Patch",
+    dismiss: isRu ? "Скрыть" : "Dismiss",
+    error: isRu ? "Ошибка: " : "Error: ",
+  };
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -373,7 +394,7 @@ export function getChatWebviewContent(
         <path d="M12 2L4 5.5V11c0 4.418 3.372 8.556 8 9.93C16.628 19.556 20 15.418 20 11V5.5L12 2z" opacity="0.6"/>
         <path d="M9 12l2 2 4-4" stroke="white" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <span>${finding ? "Ask Aegis about this finding" : scan ? "Ask Aegis about this pull request" : "Ask Aegis a security question"}</span>
+      <span>${finding ? L.askFinding : scan ? L.askScan : L.askGeneral}</span>
     </div>
     <div class="typing-indicator" id="typingIndicator">
       <div class="dot"></div>
@@ -385,21 +406,28 @@ export function getChatWebviewContent(
   <div id="inputArea">
     <textarea
       id="msgInput"
-      placeholder="${finding ? "Ask about this finding… (Ctrl+Enter to send)" : scan ? "Ask about this pull request… (Ctrl+Enter to send)" : "Ask a security question… (Ctrl+Enter to send)"}"
+      placeholder="${finding ? L.placeholderFinding : scan ? L.placeholderScan : L.placeholderGeneral}"
       rows="1"
     ></textarea>
-    <button id="clearBtn" title="Clear history">Clear</button>
-    <button id="sendBtn">Send</button>
+    <button id="clearBtn" title="${L.clear}">${L.clear}</button>
+    <button id="sendBtn">${L.send}</button>
   </div>
-  <p class="hint">Ctrl+Enter to send</p>
+  <p class="hint">${L.hint}</p>
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
 
     let currentFinding = ${initialFindingJson};
     let currentScan = ${initialScanJson};
+    let initialMessage = ${initialMessageJson};
     let history = [];
     let waiting = false;
+    const LBL_YOU = ${JSON.stringify(L.you)};
+    const LBL_AEGIS = ${JSON.stringify(L.aegis)};
+    const LBL_PROPOSED = ${JSON.stringify(L.proposedPatch)};
+    const LBL_APPLY = ${JSON.stringify(L.applyPatch)};
+    const LBL_DISMISS = ${JSON.stringify(L.dismiss)};
+    const LBL_ERROR = ${JSON.stringify(L.error)};
 
     const messagesEl = document.getElementById('messages');
     const typingEl   = document.getElementById('typingIndicator');
@@ -461,10 +489,10 @@ export function getChatWebviewContent(
 
       return \`<div class="diff-viewer">
         <div class="diff-viewer-header">
-          <span>Proposed patch</span>
+          <span>\${LBL_PROPOSED}</span>
           <div class="diff-actions">
-            <button class="apply-patch-btn" data-patch="\${encodedPatch}">Apply Patch</button>
-            <button class="dismiss-patch-btn">Dismiss</button>
+            <button class="apply-patch-btn" data-patch="\${encodedPatch}">\${LBL_APPLY}</button>
+            <button class="dismiss-patch-btn">\${LBL_DISMISS}</button>
           </div>
         </div>
         <div class="diff-viewer-body">\${lineHtml}</div>
@@ -492,7 +520,7 @@ export function getChatWebviewContent(
       if (emptyState) emptyState.style.display = 'none';
       const div = document.createElement('div');
       div.className = 'msg ' + role;
-      const labelText = role === 'user' ? 'You' : 'Aegis';
+      const labelText = role === 'user' ? LBL_YOU : LBL_AEGIS;
       let bubbleContent = renderMarkdown(content);
       if (proposedPatch) {
         bubbleContent += renderDiffBlock(proposedPatch);
@@ -546,7 +574,7 @@ export function getChatWebviewContent(
     });
 
     inputEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         sendMessage();
       }
@@ -650,20 +678,43 @@ export function getChatWebviewContent(
           if (msg.text && !waiting) {
             inputEl.value = String(msg.text);
             sendMessage();
+          } else if (msg.text) {
+            // queue until current request finishes
+            initialMessage = String(msg.text);
+            scheduleAutoSend();
           }
           break;
 
         case 'error':
           setWaiting(false);
           if (streamingBubble) {
-            streamingBubble.innerHTML = '<span style="color:#f14c4c">Error: ' + escHtml(msg.message) + '</span>';
+            streamingBubble.innerHTML = '<span style="color:#f14c4c">' + LBL_ERROR + escHtml(msg.message) + '</span>';
             finalizeStreamingMessage(null);
           } else {
-            addMessage('assistant', 'Error: ' + escHtml(msg.message));
+            addMessage('assistant', LBL_ERROR + escHtml(msg.message));
           }
           break;
       }
     });
+
+    // Auto-send the initial prompt (e.g. "Generate Whole-PR Fix Plan") once
+    // the script is running. We schedule via rAF/timeout so the panel is fully
+    // ready before posting back to the extension host.
+    function scheduleAutoSend() {
+      if (!initialMessage) return;
+      const pending = initialMessage;
+      initialMessage = null;
+      const fire = () => {
+        if (waiting) {
+          setTimeout(fire, 100);
+          return;
+        }
+        inputEl.value = pending;
+        sendMessage();
+      };
+      requestAnimationFrame(() => setTimeout(fire, 50));
+    }
+    scheduleAutoSend();
   </script>
 </body>
 </html>`;

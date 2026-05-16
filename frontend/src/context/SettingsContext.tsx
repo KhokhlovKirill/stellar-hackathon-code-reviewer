@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { getToken } from "../lib/token";
 
 export type Lang = "ru" | "en";
 
@@ -164,27 +165,57 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     return "ru";
   });
 
-  // Seed from backend policy default only when the user has no stored choice.
+  // Seed from backend: prefer the authenticated user's saved preference, then
+  // the server policy default, and finally the in-memory default.
   useEffect(() => {
-    let stored: string | null = null;
-    try {
-      stored = localStorage.getItem(LS_KEY);
-    } catch {
-      /* ignore */
-    }
-    if (stored === "ru" || stored === "en") return;
     let cancelled = false;
-    fetch("/api/config/defaults")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { default_language?: string } | null) => {
-        if (cancelled || !d) return;
-        if (d.default_language === "ru" || d.default_language === "en") {
-          setLangState(d.default_language);
+    (async () => {
+      const token = getToken();
+      if (token) {
+        try {
+          const r = await fetch("/api/ext/me/preferences", {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (r.ok) {
+            const d = (await r.json()) as { language?: string };
+            if (!cancelled && (d.language === "ru" || d.language === "en")) {
+              setLangState(d.language);
+              try {
+                localStorage.setItem(LS_KEY, d.language);
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
+          }
+        } catch {
+          /* network issue — fall through to defaults */
         }
-      })
-      .catch(() => {
+      }
+
+      let stored: string | null = null;
+      try {
+        stored = localStorage.getItem(LS_KEY);
+      } catch {
+        /* ignore */
+      }
+      if (stored === "ru" || stored === "en") return;
+
+      try {
+        const r = await fetch("/api/config/defaults");
+        if (r.ok) {
+          const d = (await r.json()) as { default_language?: string };
+          if (
+            !cancelled &&
+            (d.default_language === "ru" || d.default_language === "en")
+          ) {
+            setLangState(d.default_language);
+          }
+        }
+      } catch {
         /* offline — keep default */
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -204,6 +235,21 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem(LS_KEY, l);
     } catch {
       /* ignore */
+    }
+    // Best-effort persistence to backend so the preference syncs across
+    // devices (web + VS Code extension). Silently ignore network/auth errors.
+    const token = getToken();
+    if (token) {
+      void fetch("/api/ext/me/preferences", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ language: l }),
+      }).catch(() => {
+        /* ignore */
+      });
     }
   }, []);
 

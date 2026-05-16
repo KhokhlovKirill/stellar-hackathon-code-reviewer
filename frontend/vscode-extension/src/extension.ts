@@ -55,6 +55,9 @@ export async function activate(
         );
         statusBar.text = "$(shield) Aegis: Signed in";
 
+        // Sync language preference from server so it matches the web UI.
+        await syncLanguageFromServer(client);
+
         // Load repos immediately after login
         await prTree.setClient(client);
         prTree.loadData().catch(() => {});
@@ -297,6 +300,7 @@ export async function activate(
       authed
     );
     if (authed) {
+      await syncLanguageFromServer(client);
       prTree.loadData().catch(() => {});
     } else {
       statusBar.text = "$(shield) Aegis: Sign in";
@@ -306,6 +310,25 @@ export async function activate(
 
   // Track last branch
   lastBranch = await git.getCurrentBranch();
+}
+
+async function syncLanguageFromServer(c: AegisClient): Promise<void> {
+  try {
+    const prefs = await c.getMyPreferences();
+    if (prefs.language === "ru" || prefs.language === "en") {
+      c.setLanguage(prefs.language);
+      const cfg = vscode.workspace.getConfiguration("aegis");
+      if (cfg.get<string>("language") !== prefs.language) {
+        await cfg.update(
+          "language",
+          prefs.language,
+          vscode.ConfigurationTarget.Global
+        );
+      }
+    }
+  } catch {
+    /* not authenticated yet, or backend unavailable — ignore */
+  }
 }
 
 export function deactivate(): void {

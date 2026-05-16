@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import warnings
 from collections.abc import Iterator
 
 import pytest
+
+os.environ["AEGIS_SMTP_HOST"] = ""
+os.environ["AEGIS_SMTP_USER"] = ""
+os.environ["AEGIS_SMTP_PASSWORD"] = ""
 
 
 @pytest.fixture(autouse=True)

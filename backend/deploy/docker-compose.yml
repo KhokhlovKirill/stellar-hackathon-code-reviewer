@@ -15,8 +15,14 @@ x-app: &app
     postgres: { condition: service_healthy }
     redis: { condition: service_healthy }
   # Reach LM Studio running on the host (Apple Silicon / Linux host-gateway).
+  # The smtp.mail.ru alias points the container at the host's SMTP egress relay
+  # (socat TCP4 -> smtp.mail.ru:465 over IPv6), needed because the hosting
+  # provider blocks outbound SMTP/IPv6 from docker bridges. Keeping the hostname
+  # as smtp.mail.ru preserves TLS SNI/certificate validation.
   extra_hosts:
     - "host.docker.internal:host-gateway"
+    - "mail.aegis-relay:host-gateway"
+    - "smtp.mail.ru:host-gateway"
   restart: unless-stopped
 
 services:
