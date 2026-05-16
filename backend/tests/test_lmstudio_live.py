@@ -96,7 +96,8 @@ SCHEMA = {
 
 def _lmstudio_available() -> bool:
     try:
-        r = httpx.get(f"{LMSTUDIO_URL}/models", timeout=3)
+        with httpx.Client(timeout=3) as client:
+            r = client.get(f"{LMSTUDIO_URL}/models")
         models = [m["id"] for m in r.json().get("data", [])]
         return MODEL in models
     except Exception:
@@ -120,11 +121,11 @@ def test_don_agent_security_analysis() -> None:
         "response_format": {"type": "text"},
     }
 
-    r = httpx.post(
-        f"{LMSTUDIO_URL}/chat/completions",
-        json=payload,
-        timeout=TIMEOUT,
-    )
+    with httpx.Client(timeout=TIMEOUT) as client:
+        r = client.post(
+            f"{LMSTUDIO_URL}/chat/completions",
+            json=payload,
+        )
     assert r.status_code == 200, f"HTTP {r.status_code}: {r.text[:300]}"
 
     data = r.json()
@@ -188,19 +189,19 @@ def test_don_agent_security_analysis() -> None:
 )
 def test_don_agent_health() -> None:
     """Basic connectivity: model responds to a trivial prompt."""
-    r = httpx.post(
-        f"{LMSTUDIO_URL}/chat/completions",
-        json={
-            "model": MODEL,
-            "messages": [
-                {"role": "user", "content": 'Reply with exactly: {"findings": []}'}
-            ],
-            "temperature": 0.0,
-            "max_tokens": 64,
-            "response_format": {"type": "text"},
-        },
-        timeout=30,
-    )
+    with httpx.Client(timeout=30) as client:
+        r = client.post(
+            f"{LMSTUDIO_URL}/chat/completions",
+            json={
+                "model": MODEL,
+                "messages": [
+                    {"role": "user", "content": 'Reply with exactly: {"findings": []}'}
+                ],
+                "temperature": 0.0,
+                "max_tokens": 64,
+                "response_format": {"type": "text"},
+            },
+        )
     assert r.status_code == 200
     content = r.json()["choices"][0]["message"]["content"]
     print(f"\nHealth response: {content!r}")
@@ -208,11 +209,11 @@ def test_don_agent_health() -> None:
 
 
 def _embed(text: str) -> list[float]:
-    r = httpx.post(
-        f"{LMSTUDIO_URL}/embeddings",
-        json={"model": "text-embedding-nomic-embed-text-v1.5", "input": text},
-        timeout=30,
-    )
+    with httpx.Client(timeout=30) as client:
+        r = client.post(
+            f"{LMSTUDIO_URL}/embeddings",
+            json={"model": "text-embedding-nomic-embed-text-v1.5", "input": text},
+        )
     r.raise_for_status()
     return [float(x) for x in r.json()["data"][0]["embedding"]]
 
