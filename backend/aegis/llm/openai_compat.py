@@ -6,7 +6,9 @@ structured-output support differ. This client keeps provider quirks localized.
 
 from __future__ import annotations
 
+import json
 import time
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
@@ -60,14 +62,18 @@ class OpenAICompatibleClient(LLMClient):
         if "openrouter.ai" in self.base_url and not self.api_key:
             raise LLMError(f"{self.tier}: OPENROUTER_API_KEY is not configured")
 
-        # Check Redis cache — same model+role+messages → same response (1h TTL)
-        try:
-            from aegis.llm.cache import get_cached, set_cached
-            cached = await get_cached(self.model, role, messages)
-            if cached is not None:
-                return cached
-        except Exception:  # noqa: S110
-            pass  # cache unavailable — proceed normally without logging
+        # Check Redis cache — same model+role+messages → same response (1h TTL).
+        # Mandatory local specialists must run live so their participation is
+        # observable and never confused with a stale cached cloud-style answer.
+        use_cache = not self.tier.startswith("local-")
+        if use_cache:
+            try:
+                from aegis.llm.cache import get_cached
+                cached = await get_cached(self.model, role, messages)
+                if cached is not None:
+                    return cached
+            except Exception:  # noqa: S110
+                pass  # cache unavailable — proceed normally without logging
 
         payload: dict[str, Any] = {
             "model": self.model,
@@ -120,12 +126,60 @@ class OpenAICompatibleClient(LLMClient):
             ),
             latency_ms=latency_ms,
         )
-        try:
-            from aegis.llm.cache import set_cached
-            await set_cached(self.model, role, messages, result)
-        except Exception:  # noqa: S110
-            pass
+        if use_cache:
+            try:
+                from aegis.llm.cache import set_cached
+                await set_cached(self.model, role, messages, result)
+            except Exception:  # noqa: S110
+                pass
         return result
+
+
+    async def stream_complete(
+        self,
+        *,
+        messages: list[ChatMessage],
+        role: str,
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[str, None]:
+        """Stream chat completion tokens via SSE. No structured-output schema."""
+        if "openrouter.ai" in self.base_url and not self.api_key:
+            raise LLMError(f"{self.tier}: OPENROUTER_API_KEY is not configured")
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.4,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    headers=self._headers(),
+                    json=payload,
+                ) as r:
+                    if r.status_code >= 400:
+                        body = await r.aread()
+                        raise LLMError(f"{self.tier}: HTTP {r.status_code}: {body[:300]!r}")
+                    async for line in r.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        chunk_str = line[6:].strip()
+                        if chunk_str == "[DONE]":
+                            return
+                        try:
+                            chunk = json.loads(chunk_str)
+                            delta = (chunk["choices"][0]["delta"] or {}).get("content") or ""
+                            if delta:
+                                yield delta
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            continue
+        except httpx.HTTPError as exc:
+            raise LLMError(f"{self.tier}: stream request failed: {exc}") from exc
 
 
 def _message_content(data: dict[str, Any]) -> str:

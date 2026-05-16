@@ -83,6 +83,13 @@ def create_app() -> FastAPI:
     except ImportError:
         log.warning("web_router_unavailable", phase="server-rendered control plane")
 
+    try:
+        from aegis.api.extension import router as ext_router
+
+        app.include_router(ext_router)
+    except ImportError:
+        log.warning("ext_router_unavailable")
+
     return app
 
 

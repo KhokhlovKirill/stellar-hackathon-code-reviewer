@@ -16,6 +16,9 @@
       <div class="flex items-center gap-4 text-sm">
         <a href="/review" class="hover:text-white text-slate-300">⚡ Quick Review</a>
         {% if user %}
+        <a href="/chat" class="hover:text-white text-slate-300">🛡️ Agent</a>
+        {% endif %}
+        {% if user %}
         <a href="/dashboard" class="hover:text-white text-slate-300">Projects</a>
         <span class="text-slate-400">{{ user.email }}</span>
         <a href="/logout"

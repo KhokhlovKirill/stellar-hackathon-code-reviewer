@@ -28,4 +28,4 @@ docker-down:
 	docker compose -f backend/deploy/docker-compose.yml down
 
 docker-logs:
-	docker compose -f backend/deploy/docker-compose.yml logs -f api worker
+	docker compose -f backend/deploy/docker-compose.yml logs -f api worker web

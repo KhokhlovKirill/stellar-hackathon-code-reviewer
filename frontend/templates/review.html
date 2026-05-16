@@ -113,6 +113,12 @@
           {{ f.cwe }}
         </span>
         {% endif %}
+        {% set label = result.finding_labels.get(f.fingerprint()) if result.finding_labels is defined else None %}
+        {% if label %}
+        <span class="text-xs bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded">
+          {{ label }}
+        </span>
+        {% endif %}
         <span class="font-medium text-sm">{{ f.title }}</span>
         <span class="ml-auto text-xs text-slate-400 font-mono">
           {{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}
@@ -151,6 +157,34 @@
     </p>
   </div>
   {% endif %}
+
+  <div class="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+    <div>
+      <h2 class="text-base font-semibold">Agent review summary</h2>
+      <p class="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{{ result.summary }}</p>
+      {% if result.finding_labels %}
+      <div class="mt-3 flex flex-wrap gap-1.5">
+        {% for label in result.finding_labels.values() %}
+        <span class="text-xs rounded border border-slate-200 bg-slate-50 text-slate-600 px-2 py-1">{{ label }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a href="/chat?scan_id={{ result.scan_id }}&prompt={{ 'Summarize the whole pull request security review and answer follow-up questions about overall risk.' | urlencode }}"
+         class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-semibold hover:bg-slate-700">
+        Ask about whole PR
+      </a>
+      <a href="/chat?scan_id={{ result.scan_id }}&prompt={{ 'Explain the full security review in plain language, grouping findings by root cause and priority.' | urlencode }}"
+         class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+        Explain review
+      </a>
+      <a href="/chat?scan_id={{ result.scan_id }}&prompt={{ 'Create a complete remediation plan for this pull request. If possible, provide unified diff patches for critical and high severity findings.' | urlencode }}"
+         class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+        Fix whole PR
+      </a>
+    </div>
+  </div>
 
   {% endif %}
 

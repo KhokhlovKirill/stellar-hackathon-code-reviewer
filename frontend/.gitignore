@@ -1,0 +1,26 @@
+# Build output
+dist/
+build/
+
+# Node
+node_modules/
+.pnpm-store/
+.npm/
+*.log
+
+# VS Code extension build artifacts
+vscode-extension/out/
+vscode-extension/node_modules/
+vscode-extension/*.vsix
+
+# Vite / TS
+.vite/
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Test
+coverage/

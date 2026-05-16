@@ -1,10 +1,25 @@
-# Frontend
+# Aegis Frontend
 
-This directory is the frontend boundary for Aegis.
+React + Vite + TypeScript + Tailwind CSS. The legacy Jinja templates remain in
+`frontend/templates/` for backend compatibility, but the production application UI
+is the React SPA in `frontend/src/`.
 
-Current contents:
+## Run
 
-- `templates/` — server-rendered Jinja2 templates used by `backend/aegis/web/routes.py`.
+```bash
+make docker-up
+```
 
-The backend reads templates from `AEGIS_FRONTEND_TEMPLATES`; by default, local backend
-runs use `../frontend/templates`, and Docker uses `/app/frontend/templates`.
+React UI: http://localhost:8099
+Backend API: http://localhost:8080
+
+For local frontend development:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite serves http://localhost:5173 and proxies API routes through the configured
+`VITE_API_PROXY` target. Default: `http://localhost:8099`.

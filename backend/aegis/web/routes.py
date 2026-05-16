@@ -6,14 +6,18 @@ redirect (POST-redirect-GET). Every page except auth requires a logged-in user.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import uuid
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from aegis.api.auth import issue_token
@@ -427,6 +431,7 @@ async def review_submit(
     token: str = Form(""),
     user: User | None = _user_opt,
 ) -> HTMLResponse:
+    from aegis.api.extension import _persist_scan_result
     from aegis.pipeline.simple_scan import run_simple_scan
 
     url = repo_url.strip()
@@ -435,13 +440,190 @@ async def review_submit(
                      error="Please enter a GitHub URL", url="")
 
     log.info("web.simple_scan", url=url)
-    result = await run_simple_scan(url, token=token.strip() or None)
+    from aegis.config import get_config
+    result = await run_simple_scan(
+        url,
+        token=token.strip() or None,
+        lang=get_config().policy.comment_language,
+    )
 
     if result.error:
         return _page(request, "review.html", user=user, result=None,
                      error=result.error, url=url)
 
+    result.scan_id = uuid.uuid4().hex
+    await _persist_scan_result(
+        scan_id=result.scan_id,
+        provider="github",
+        repo_slug=result.repo,
+        pr_id=str(result.pr_number),
+        head_sha=result.head_sha,
+        files_scanned=result.files_scanned_paths,
+        degraded=result.degraded_reasons,
+        findings=result.findings,
+        summary=result.summary,
+        finding_labels=result.finding_labels,
+    )
+
     return _page(request, "review.html", user=user, result=result, error=None, url=url)
+
+
+# ----------------------------------------------------------------------------- #
+# Chat
+# ----------------------------------------------------------------------------- #
+@router.get("/chat", response_class=HTMLResponse)
+async def chat_page(
+    request: Request,
+    scan_id: str | None = None,
+    fingerprint: str | None = None,
+    prompt: str | None = None,
+    user: User = _user_web,
+) -> HTMLResponse:
+    """Chat page — optionally pre-loaded with a finding context."""
+    finding_data: dict[str, Any] | None = None
+    scan_data: dict[str, Any] | None = None
+
+    if scan_id:
+        async with get_session() as s:
+            if fingerprint:
+                f_row = (
+                    await s.execute(
+                        select(FindingRow).where(
+                            FindingRow.scan_id == scan_id,
+                            FindingRow.fingerprint == fingerprint,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if f_row:
+                    finding_data = {
+                        "fingerprint": f_row.fingerprint,
+                        "file": f_row.file,
+                        "line": f_row.line,
+                        "cwe": f_row.cwe,
+                        "severity": f_row.severity,
+                        "title": f_row.title,
+                        "rationale": f_row.rationale,
+                        "exploit": f_row.exploit,
+                        "fix": f_row.fix,
+                    }
+            sc = (
+                await s.execute(select(Scan).where(Scan.id == scan_id))
+            ).scalar_one_or_none()
+            if sc:
+                f_rows = (
+                    await s.execute(select(FindingRow).where(FindingRow.scan_id == scan_id))
+                ).scalars().all()
+                scan_data = {
+                    "id": sc.id,
+                    "scan_id": sc.id,
+                    "repo_slug": sc.repo_slug,
+                    "repo": sc.repo_slug,
+                    "pr_id": sc.pr_id,
+                    "pr_number": int(sc.pr_id) if str(sc.pr_id).isdigit() else 0,
+                    "pr_title": f"PR #{sc.pr_id}",
+                    "pr_url": "",
+                    "pr_author": "",
+                    "summary": (sc.decision or {}).get("summary", ""),
+                    "risk_score": sc.risk_score,
+                    "risk_label": sc.risk_label,
+                    "files_scanned": len(sc.files_scanned or []),
+                    "degraded": bool(sc.degraded),
+                    "findings": [
+                        {
+                            "fingerprint": f.fingerprint,
+                            "file": f.file,
+                            "line": f.line,
+                            "cwe": f.cwe,
+                            "severity": f.severity,
+                            "title": f.title,
+                            "rationale": f.rationale,
+                            "exploit": f.exploit,
+                            "fix": f.fix,
+                        }
+                        for f in f_rows
+                    ],
+                }
+
+    finding_json = json.dumps(finding_data) if finding_data else "null"
+    scan_json = json.dumps(scan_data) if scan_data else "null"
+    return _page(
+        request,
+        "chat.html",
+        user=user,
+        finding=finding_data,
+        scan=scan_data,
+        finding_json=finding_json,
+        scan_json=scan_json,
+        initial_prompt=prompt or "",
+    )
+
+
+class _WebChatHistoryItem(BaseModel):
+    role: str
+    content: str
+
+
+class _WebChatRequest(BaseModel):
+    finding: dict[str, Any] | None = None
+    scan: dict[str, Any] | None = None
+    repo: str = ""
+    message: str
+    history: list[_WebChatHistoryItem] = []
+    lang: str = "ru"
+
+
+@router.post("/api/web/chat/stream")
+async def web_chat_stream(
+    req: _WebChatRequest, user: User = _user_web
+) -> StreamingResponse:
+    """SSE streaming chat endpoint for the web UI (session-cookie auth)."""
+    from aegis.api.extension import ChatFinding, ChatHistoryItem, ChatRequest, ChatScan
+    from aegis.llm.router import LLMRouter
+
+    chat_finding: ChatFinding | None = None
+    if req.finding:
+        try:
+            chat_finding = ChatFinding(**req.finding)
+        except Exception:
+            chat_finding = None
+    chat_scan: ChatScan | None = None
+    if req.scan:
+        try:
+            chat_scan = ChatScan(**req.scan)
+        except Exception:
+            chat_scan = None
+
+    ext_req = ChatRequest(
+        finding=chat_finding,
+        scan=chat_scan,
+        repo=req.repo,
+        message=req.message,
+        history=[ChatHistoryItem(role=h.role, content=h.content) for h in req.history],
+        lang=req.lang if req.lang in ("ru", "en") else "ru",
+    )
+
+    from aegis.api.extension import _build_chat_messages
+    messages = _build_chat_messages(ext_req)
+    router_obj = LLMRouter()
+
+    async def event_generator() -> AsyncIterator[str]:
+        try:
+            async for token in router_obj.stream_chat(
+                role="judge", messages=messages, max_tokens=2048
+            ):
+                payload = json.dumps({"token": token}, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+        except Exception as exc:
+            log.warning("web.chat_stream.failed", error=str(exc))
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/scans/{scan_id}", response_class=HTMLResponse)
@@ -467,10 +649,15 @@ async def scan_detail(
             select(FindingRow).where(FindingRow.scan_id == scan_id)
             .order_by(FindingRow.severity.desc())
         )).scalars().all()
+        labels = (scan.decision or {}).get("finding_labels", {})
+        if not isinstance(labels, dict):
+            labels = {}
         f_rows = [
-            {"file": f.file, "line": f.line, "cwe": f.cwe,
+            {"fingerprint": f.fingerprint, "file": f.file, "line": f.line, "cwe": f.cwe,
              "severity": f.severity, "title": f.title,
-             "rationale": f.rationale, "fix": f.fix}
+             "rationale": f.rationale, "fix": f.fix,
+             "source": f.source, "confidence": f.confidence,
+             "short_label": labels.get(f.fingerprint)}
             for f in findings
         ]
         scan_row = {
@@ -480,5 +667,6 @@ async def scan_detail(
             "files_scanned": scan.files_scanned,
             "files_skipped": scan.files_skipped,
             "degraded": scan.degraded,
+            "decision": scan.decision or {},
         }
     return _page(request, "scan.html", user=user, scan=scan_row, findings=f_rows)

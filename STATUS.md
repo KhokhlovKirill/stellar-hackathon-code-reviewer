@@ -1,6 +1,6 @@
 # Aegis — Статус проекта
 
-> Обновлено: 2026-05-15 23:20
+> Обновлено: 2026-05-16 (сессия 7)
 
 ---
 
@@ -38,9 +38,10 @@ code-review/
 │   ├── config.example.yaml
 │   └── .env.example
 │
-├── frontend/                        # frontend boundary
-│   ├── templates/                   # текущие Jinja2 templates
-│   └── README.md                    # место для будущего frontend-приложения
+├── frontend/                        # React UI + legacy templates + VS Code extension
+│   ├── src/                         # React/Vite production UI
+│   ├── templates/                   # legacy Jinja2 templates
+│   └── vscode-extension/            # VS Code extension
 │
 ├── Makefile                         # root wrapper для backend/docker команд
 ├── STATUS.md
@@ -52,9 +53,10 @@ code-review/
 └── .env                             # локальные секреты, не коммитить
 ```
 
-Текущий UI пока остаётся server-rendered Jinja2: Python routes находятся в
-`backend/aegis/web/routes.py`, сами шаблоны вынесены в `frontend/templates/`.
-Backend читает путь из `AEGIS_FRONTEND_TEMPLATES`.
+Production UI теперь React/Vite из ветки `origin/frontend`, обслуживается nginx
+контейнером `web` на `localhost:8099` и проксирует `/api/*` в backend. Legacy
+Jinja2 routes/templates сохранены для совместимости и smoke/debug сценариев.
+Backend читает legacy template path из `AEGIS_FRONTEND_TEMPLATES`.
 
 Локально default: `../frontend/templates` относительно `backend/`.
 В Docker default: `/app/frontend/templates`.
@@ -87,7 +89,7 @@ cd /Users/nikitasyzdykov/Desktop/code-review/backend
 
 docker compose -f deploy/docker-compose.yml build
 docker compose -f deploy/docker-compose.yml up -d
-docker compose -f deploy/docker-compose.yml logs -f api worker
+docker compose -f deploy/docker-compose.yml logs -f api worker web
 ```
 
 Root `.venv` пока сохранён. `backend/Makefile` использует `../.venv` по умолчанию.
@@ -114,14 +116,16 @@ docker compose -f backend/deploy/docker-compose.yml build
 docker compose -f deploy/docker-compose.yml build
 ```
 
-Compose использует build context root (`../..`), чтобы контейнер получил и
-`backend/`, и `frontend/`. В контейнер копируются:
+Compose использует build context root (`../..`). Backend image получает
+`backend/` и legacy `frontend/templates`; отдельный `web` image собирает React UI
+из `frontend/src` и отдаёт его через nginx.
 
 - `backend/aegis`
 - `backend/alembic`
 - `backend/alembic.ini`
 - `backend/config.example.yaml`
 - `frontend/templates`
+- `frontend/src` → `web` container build
 
 В Docker env:
 
@@ -140,15 +144,20 @@ LMSTUDIO_BASE_URL=http://host.docker.internal:1234/v1
 
 ```text
 ruff: зелёный
-mypy: зелёный, 90 source files
-pytest: 72 passed
+mypy: зелёный, 87 source files
+pytest: 74 passed
+frontend React build: зелёный
+VS Code extension build/package: зелёный
 eval gate: precision=1.0, recall=1.0, line_accuracy=1.0, tp=11
 ```
 
-Docker build запущен:
+Docker build/up проверены:
 
 ```bash
-docker compose -f backend/deploy/docker-compose.yml build
+docker compose -f backend/deploy/docker-compose.yml build api worker web
+docker compose -f backend/deploy/docker-compose.yml up -d api worker web
+curl http://localhost:8080/readyz
+curl http://localhost:8099/
 ```
 
 ---
@@ -175,6 +184,12 @@ role=judge       → cloud-judge (Qwen3 Coder free) → cloud-generalist → loc
 | `local-secure` | `don-agent-v3` | LM Studio `:1234` | fallback |
 | `local-generalist` | `qwen3.6-35b-a3b-ud-mlx` | LM Studio `:1234` | swap/local mode |
 
+Для pull-mode scan из VS Code/API `don-agent-v3` больше не является только fallback:
+OpenRouter detector и локальный Don запускаются параллельно, Don вызывается принудительно
+как `local-secure`. Если Don недоступен, scan помечается degraded (`local-secure`).
+Локальные LM Studio tiers больше не берутся из Redis cache: обязательный Don-запуск
+идёт live, а findings от Don сохраняют source `llm_a` и отображаются в UI.
+
 ---
 
 ## Публичный доступ
@@ -200,12 +215,24 @@ nohup bash start_tunnel.sh > /tmp/aegis_tunnel.log 2>&1 &
 | Функция | Статус |
 |---|---|
 | Web UI routes + Jinja templates from `frontend/templates` | работает |
+| React/Vite UI на `localhost:8099` | работает |
 | REST API `/api/...` | работает |
 | GitHub/GitLab/Bitbucket webhook gateway | работает |
 | Quick Connect GitHub repo + webhook registration | работает |
 | Pull-mode scan `/review` | работает |
 | Deterministic scan: secrets/entropy/Semgrep/Gitleaks/Bandit/SCA wrappers | работает |
 | LLM router: OpenRouter + LM Studio fallback/swap | работает |
+| VS Code scan PR / scan URL / scan branch persistence | работает |
+| Pull-mode OpenRouter + mandatory Don ensemble | работает |
+| Agent review summary в VS Code и web | работает |
+| Summary language ru/en из настроек VS Code | работает |
+| 1-5-word finding labels от coordinator LLM | работает |
+| Whole-PR Ask/Explain/Fix chat context | работает |
+| VS Code Apply Patch (sanitize + recount + path-resolve + multi-strategy) | работает |
+| Apply Patch recovery: Open scanned folder / Save / Copy при `target not in workspace` | работает |
+| Web chat = extension (SSE `/api/ext/chat/stream`, structured finding/scan) | работает |
+| Web finding/scan Ask/Explain/Fix + diff Copy/Download | работает |
+| Web Settings page + ru/en language switch (i18n, lang threaded в API) | работает |
 | ARQ worker queue | работает |
 | Redis LLM cache | работает |
 | Security Knowledge Base | работает |

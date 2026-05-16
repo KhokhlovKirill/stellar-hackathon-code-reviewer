@@ -36,6 +36,15 @@ services:
     <<: *app
     command: ["arq", "aegis.worker.main.WorkerSettings"]
 
+  web:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+    ports: ["8099:80"]
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     environment:

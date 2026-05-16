@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,3 +49,13 @@ class LLMClient:
         max_tokens: int,
     ) -> LLMCompletion:
         raise NotImplementedError
+
+    async def stream_complete(
+        self,
+        *,
+        messages: list[ChatMessage],
+        role: str,
+        max_tokens: int,
+    ) -> AsyncGenerator[str, None]:
+        raise NotImplementedError
+        yield  # make it an async generator

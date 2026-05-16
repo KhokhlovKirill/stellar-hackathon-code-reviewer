@@ -16,6 +16,7 @@ Cloud tiers (LMSTUDIO_SWAP_MODELS=false):
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncGenerator
 
 from aegis.config import get_config, get_settings
 from aegis.llm.base import ChatMessage, JSONSchema, LLMClient, LLMCompletion, LLMError
@@ -203,3 +204,108 @@ class LLMRouter:
                 log.warning("llm.tier_failed", role=role, tier=tier, error=str(exc))
 
         raise LLMError(f"all LLM tiers failed for {role}: {last_error}")
+
+    async def complete_on_tier(
+        self,
+        *,
+        tier: str,
+        role: str,
+        messages: list[ChatMessage],
+        schema: JSONSchema,
+        max_tokens: int = 4096,
+    ) -> LLMCompletion:
+        """Run a completion on one required tier without falling back.
+
+        This is used for mandatory specialists such as the local Don security model:
+        the caller must know explicitly whether that module participated instead of
+        silently receiving a cloud fallback under the same role.
+        """
+        clients = self._clients()
+        client = clients.get(tier)
+        if client is None:
+            raise LLMError(f"unknown LLM tier: {tier}")
+
+        active_model: str | None = None
+        if tier.startswith("local-"):
+            try:
+                active_model = await self._ensure_local_model(tier)
+            except Exception as exc:
+                raise LLMError(f"{tier}: model load failed: {exc}") from exc
+
+        if active_model and active_model != client.model:
+            client = OpenAICompatibleClient(
+                tier=tier,
+                base_url=self.settings.lmstudio_base_url,
+                model=active_model,
+                api_key="",
+                strict_schema=False,
+            )
+
+        if not await self._healthy(client):
+            raise LLMError(f"{tier}: health check failed")
+
+        try:
+            out = await client.complete(
+                messages=messages,
+                schema=schema,
+                role=role,
+                timeout_seconds=self.cfg.request_timeout_seconds,
+                max_tokens=max_tokens,
+            )
+            metrics.llm_tokens_total.labels(tier, "prompt").inc(out.usage.prompt_tokens)
+            metrics.llm_tokens_total.labels(tier, "completion").inc(out.usage.completion_tokens)
+            metrics.llm_cost_usd_total.labels(tier).inc(out.usage.cost_usd)
+            metrics.llm_latency.labels(tier).observe(out.latency_ms / 1000)
+            return out
+        except Exception:
+            self._health_cache[tier] = (time.monotonic(), False)
+            metrics.llm_tier_down.labels(tier).set(1)
+            raise
+
+    async def stream_chat(
+        self,
+        *,
+        role: str,
+        messages: list[ChatMessage],
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[str, None]:
+        """Stream chat tokens from the first healthy tier in fallback order."""
+        clients = self._clients()
+        last_error: Exception | None = None
+
+        for tier in dict.fromkeys(self._fallback_order(role)):
+            client = clients.get(tier)
+            if client is None:
+                continue
+            active_model: str | None = None
+            if self._swap_enabled() and tier.startswith("local-"):
+                try:
+                    active_model = await self._ensure_local_model(tier)
+                except Exception as exc:
+                    log.warning("llm.stream_swap_failed", tier=tier, error=str(exc))
+                    last_error = LLMError(f"{tier}: model swap failed: {exc}")
+                    continue
+            if active_model and active_model != client.model:
+                client = OpenAICompatibleClient(
+                    tier=tier,
+                    base_url=self.settings.lmstudio_base_url,
+                    model=active_model,
+                    api_key="",
+                    strict_schema=False,
+                )
+            if not await self._healthy(client):
+                last_error = LLMError(f"{tier}: health check failed")
+                continue
+            try:
+                async for token in client.stream_complete(
+                    messages=messages, role=role, max_tokens=max_tokens
+                ):
+                    yield token
+                return
+            except Exception as exc:
+                last_error = exc
+                self._health_cache[tier] = (time.monotonic(), False)
+                metrics.llm_tier_down.labels(tier).set(1)
+                log.warning("llm.stream_tier_failed", role=role, tier=tier, error=str(exc))
+
+        raise LLMError(f"all LLM tiers failed for stream {role}: {last_error}")

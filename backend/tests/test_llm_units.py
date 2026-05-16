@@ -6,12 +6,19 @@ import json
 
 from aegis.llm.parser import _normalise_finding, finding_schema, parse_findings
 from aegis.llm.prompt import review_messages
+from aegis.pipeline.simple_scan import (
+    _fallback_finding_labels,
+    _fallback_summary,
+    _merge_judged_with_sources,
+)
 from aegis.schemas import (
     DiffLine,
     FileChange,
+    Finding,
     FindingSource,
     Hunk,
     LineKind,
+    Severity,
 )
 
 
@@ -170,3 +177,57 @@ def test_review_prompt_marks_diff_as_untrusted_data() -> None:
     assert "<<<CONTEXT>>>" in messages[1]["content"]
     assert "context app/db.py" in messages[1]["content"]
     assert "new=7" in messages[1]["content"]
+
+
+def test_judge_merge_preserves_don_source_and_wording() -> None:
+    judged = Finding(
+        file="app/db.py",
+        line=7,
+        cwe="CWE-89",
+        rule_id="llm:judge",
+        severity=Severity.HIGH,
+        confidence=0.7,
+        source=FindingSource.JUDGE,
+        title="SQL injection",
+        rationale="judge wording",
+        exploit=None,
+        fix=None,
+    )
+    don = judged.model_copy(
+        update={
+            "rule_id": "llm:llm_a",
+            "source": FindingSource.LLM_A,
+            "confidence": 0.91,
+            "title": "Raw SQL injection",
+            "rationale": "Don saw concatenated uid.",
+        }
+    )
+
+    merged = _merge_judged_with_sources([judged], [don])
+
+    assert len(merged) == 1
+    assert merged[0].source is FindingSource.LLM_A
+    assert merged[0].title == "Raw SQL injection"
+    assert merged[0].confidence == 0.91
+
+
+def test_fallback_summary_and_labels_respect_language_shape() -> None:
+    finding = Finding(
+        file="app/db.py",
+        line=7,
+        cwe="CWE-89",
+        rule_id="llm:llm_a",
+        severity=Severity.HIGH,
+        confidence=0.91,
+        source=FindingSource.LLM_A,
+        title="Raw SQL injection through uid",
+        rationale="bad",
+        exploit=None,
+        fix=None,
+    )
+
+    summary = _fallback_summary("o/r", 1, 2, [finding], [], lang="ru")
+    labels = _fallback_finding_labels([finding])
+
+    assert "Aegis проверил" in summary
+    assert labels[finding.fingerprint()] == "Raw SQL injection through uid"

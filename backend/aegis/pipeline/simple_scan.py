@@ -6,6 +6,8 @@ For private repos: pass access_token (optional).
 
 from __future__ import annotations
 
+import asyncio
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -13,6 +15,7 @@ from typing import Any
 import httpx
 
 from aegis.config import get_settings
+from aegis.llm.base import LLMCompletion
 from aegis.llm.parser import finding_schema, parse_findings
 from aegis.llm.prompt import judge_messages, review_messages
 from aegis.llm.router import LLMRouter
@@ -39,10 +42,16 @@ class SimpleScanResult:
     pr_title: str
     pr_url: str
     pr_author: str
+    scan_id: str = ""
     findings: list[Finding] = field(default_factory=list)
     error: str | None = None
     files_scanned: int = 0
     degraded: bool = False  # True if LLM was skipped
+    degraded_reasons: list[str] = field(default_factory=list)
+    files_scanned_paths: list[str] = field(default_factory=list)
+    head_sha: str = ""
+    summary: str = ""
+    finding_labels: dict[str, str] = field(default_factory=dict)
 
 
 def _parse_github_url(url: str) -> tuple[str, int | None]:
@@ -188,10 +197,15 @@ def _trim_files_to_budget(files: list[FileChange], char_budget: int) -> list[Fil
 
 async def _run_llm(
     slug: str, pr_number: int, files: list[FileChange], det_findings: list[Finding]
-) -> tuple[list[Finding], bool]:
-    """Run LLM ensemble. Returns (findings, degraded)."""
+) -> tuple[list[Finding], list[str]]:
+    """Run cloud + mandatory Don detector, then judge.
+
+    OpenRouter and local Don are launched concurrently. Don is forced to the
+    `local-secure` tier so it cannot be silently replaced by another model.
+    Returns (findings, degraded_reasons).
+    """
     if not files:
-        return [], False
+        return [], []
 
     router = LLMRouter()
     schema = finding_schema()
@@ -217,26 +231,84 @@ async def _run_llm(
         deterministic_findings=det_findings,
         context_map={},
     )
+    don_messages = [
+        {
+            "role": "system",
+            "content": (
+                messages[0]["content"]
+                + "\n\nYou are Don, the mandatory local security specialist for this "
+                "review. Use your offensive-security knowledge to find exploitable "
+                "issues in the changed code, but do not use action tags. Return only "
+                "the JSON object requested above."
+            ),
+        },
+        messages[1],
+    ]
 
-    # Detector pass
-    llm_findings: list[Finding] = []
-    degraded = False
-    try:
-        completion = await router.complete(
+    degraded_reasons: list[str] = []
+
+    async def _run_cloud() -> LLMCompletion:
+        return await router.complete(
             role="detector_a",
             messages=messages,
             schema=schema,
             max_tokens=4096,
         )
-        raw = parse_findings(completion.content, source=FindingSource.LLM_B)
-        llm_findings = [f for f in raw if f.severity in (
+
+    async def _run_don() -> LLMCompletion:
+        return await router.complete_on_tier(
+            tier="local-secure",
+            role="detector_b",
+            messages=don_messages,
+            schema=schema,
+            max_tokens=4096,
+        )
+
+    cloud_result, don_result = await asyncio.gather(
+        _run_cloud(),
+        _run_don(),
+        return_exceptions=True,
+    )
+
+    llm_findings: list[Finding] = []
+    cloud_findings: list[Finding] = []
+    don_findings: list[Finding] = []
+    if isinstance(cloud_result, BaseException):
+        degraded_reasons.append("cloud-detector")
+        log.warning("simple_scan.cloud_detector_failed", error=str(cloud_result))
+    else:
+        raw = parse_findings(cloud_result.content, source=FindingSource.LLM_B)
+        cloud_findings = [f for f in raw if f.severity in (
             Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW
         )]
-        log.info("simple_scan.llm_ok", tier=completion.tier, count=len(llm_findings))
-    except Exception as exc:
-        log.warning("simple_scan.llm_failed", error=str(exc))
-        degraded = True
-        return det_findings, degraded
+        llm_findings.extend(cloud_findings)
+        log.info(
+            "simple_scan.cloud_detector_ok",
+            tier=cloud_result.tier,
+            count=len(cloud_findings),
+            chars=len(cloud_result.content),
+            completion_tokens=cloud_result.usage.completion_tokens,
+        )
+
+    if isinstance(don_result, BaseException):
+        degraded_reasons.append("local-secure")
+        log.warning("simple_scan.don_detector_failed", error=str(don_result))
+    else:
+        raw = parse_findings(don_result.content, source=FindingSource.LLM_A)
+        don_findings = [f for f in raw if f.severity in (
+            Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW
+        )]
+        llm_findings.extend(don_findings)
+        log.info(
+            "simple_scan.don_detector_ok",
+            tier=don_result.tier,
+            count=len(don_findings),
+            chars=len(don_result.content),
+            completion_tokens=don_result.usage.completion_tokens,
+        )
+
+    if not llm_findings and degraded_reasons:
+        return det_findings, degraded_reasons
 
     # Judge pass — consolidate + deduplicate
     all_candidates = det_findings + llm_findings
@@ -257,16 +329,264 @@ async def _run_llm(
             )
             judged = parse_findings(j_completion.content, source=FindingSource.JUDGE)
             log.info("simple_scan.judge_ok", tier=j_completion.tier, count=len(judged))
-            return judged, False
+            return _merge_judged_with_sources(judged, all_candidates), degraded_reasons
         except Exception as exc:
             log.warning("simple_scan.judge_failed", error=str(exc))
             # Return merged without judging
-            return all_candidates, False
+            degraded_reasons.append("judge")
+            return _dedupe_findings(all_candidates), degraded_reasons
 
-    return all_candidates, degraded
+    return _dedupe_findings(all_candidates), degraded_reasons
 
 
-async def run_simple_scan(url: str, token: str | None = None) -> SimpleScanResult:
+def _finding_key(f: Finding) -> tuple[str, int, str]:
+    return (f.file, f.line, (f.cwe or f.title).lower())
+
+
+def _same_finding(a: Finding, b: Finding) -> bool:
+    if a.file != b.file or a.line != b.line:
+        return False
+    if a.cwe and b.cwe and a.cwe == b.cwe:
+        return True
+    return a.title.strip().lower() == b.title.strip().lower()
+
+
+def _higher_severity(a: Severity, b: Severity) -> Severity:
+    return a if a.rank >= b.rank else b
+
+
+def _dedupe_findings(findings: list[Finding]) -> list[Finding]:
+    out: list[Finding] = []
+    for f in findings:
+        match_idx = next((i for i, existing in enumerate(out) if _same_finding(existing, f)), None)
+        if match_idx is None:
+            out.append(f)
+            continue
+        existing = out[match_idx]
+        if f.confidence > existing.confidence or f.source is FindingSource.LLM_A:
+            out[match_idx] = f.model_copy(
+                update={
+                    "severity": _higher_severity(existing.severity, f.severity),
+                    "confidence": max(existing.confidence, f.confidence),
+                }
+            )
+    return out
+
+
+def _merge_judged_with_sources(judged: list[Finding], candidates: list[Finding]) -> list[Finding]:
+    """Keep judge filtering while preserving Don/cloud source and wording.
+
+    The judge is best at deduplication, but its canonical JSON loses which
+    detector found the issue. For display and auditability we map each judged
+    finding back to the closest candidate, preferring Don when it participated.
+    """
+    if not judged:
+        return _dedupe_findings(candidates)
+
+    merged: list[Finding] = []
+    for jf in judged:
+        matches = [c for c in candidates if _same_finding(jf, c)]
+        if not matches:
+            merged.append(jf)
+            continue
+        preferred = (
+            next((c for c in matches if c.source is FindingSource.LLM_A), None)
+            or matches[0]
+        )
+        merged.append(
+            preferred.model_copy(
+                update={
+                    "severity": _higher_severity(jf.severity, preferred.severity),
+                    "confidence": max(jf.confidence, preferred.confidence),
+                    "diff_position": jf.diff_position or preferred.diff_position,
+                }
+            )
+        )
+    return _dedupe_findings(merged)
+
+
+def _fallback_summary(
+    slug: str,
+    pr_number: int,
+    files_scanned: int,
+    findings: list[Finding],
+    degraded_reasons: list[str],
+    lang: str = "ru",
+) -> str:
+    counts: dict[str, int] = {}
+    for f in findings:
+        counts[f.severity.value] = counts.get(f.severity.value, 0) + 1
+    ordered = ", ".join(
+        f"{counts[sev]} {sev}" for sev in ("critical", "high", "medium", "low", "info")
+        if counts.get(sev)
+    ) or "0 findings"
+    top = findings[:5]
+    if lang == "ru":
+        lines = [
+            f"Aegis проверил {files_scanned} изменённых файлов в {slug} PR #{pr_number}.",
+            f"Подтверждённый результат: {ordered}.",
+        ]
+        if degraded_reasons:
+            lines.append(f"Модули с деградацией: {', '.join(degraded_reasons)}.")  # noqa: RUF001
+        if top:
+            lines.append("Самые приоритетные пункты:")
+            lines.extend(
+                f"- {f.severity.value.upper()} {f.file}:{f.line} {f.cwe or ''} - {f.title}"
+                for f in top
+            )
+        else:
+            lines.append(
+                "Подтверждённых эксплуатируемых security проблем "
+                "на изменённых строках не найдено."
+            )
+    else:
+        lines = [
+            f"Aegis reviewed {files_scanned} changed file(s) in {slug} PR #{pr_number}.",
+            f"Confirmed result: {ordered}.",
+        ]
+        if degraded_reasons:
+            lines.append(f"Degraded modules: {', '.join(degraded_reasons)}.")
+        if top:
+            lines.append("Highest priority items:")
+            lines.extend(
+                f"- {f.severity.value.upper()} {f.file}:{f.line} {f.cwe or ''} - {f.title}"
+                for f in top
+            )
+        else:
+            lines.append("No confirmed exploitable security issues were found on changed lines.")
+    return "\n".join(lines)
+
+
+def _fallback_finding_labels(findings: list[Finding]) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for f in findings:
+        words = re.findall(r"[\w#./-]+", f.title, flags=re.UNICODE)[:5]
+        labels[f.fingerprint()] = " ".join(words) or (f.cwe or f.severity.value)
+    return labels
+
+
+async def _generate_scan_review(
+    slug: str,
+    pr_number: int,
+    pr_title: str,
+    files_scanned: int,
+    findings: list[Finding],
+    degraded_reasons: list[str],
+    lang: str = "ru",
+) -> tuple[str, dict[str, str]]:
+    fallback = _fallback_summary(
+        slug,
+        pr_number,
+        files_scanned,
+        findings,
+        degraded_reasons,
+        lang=lang,
+    )
+    fallback_labels = _fallback_finding_labels(findings)
+    language_name = "Russian" if lang == "ru" else "English"
+
+    findings_payload = [
+        {
+            "fingerprint": f.fingerprint(),
+            "severity": f.severity.value,
+            "file": f.file,
+            "line": f.line,
+            "cwe": f.cwe,
+            "source": f.source.value,
+            "title": f.title,
+            "rationale": f.rationale,
+            "fix": f.fix,
+        }
+        for f in findings[:20]
+    ]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Aegis coordinator. Write a clear production security review "
+                f"summary for the whole pull request in {language_name}. This must be readable "
+                "prose, not a checklist template and not a generic boilerplate. Mention "
+                "the concrete risk, affected files, priority, whether merge should wait, "
+                "and what should happen next. Also return a 1-5 word label for each "
+                "finding, in the same language, suitable for compact UI display. "
+                "Return JSON: {\"summary\":\"...\",\"finding_labels\":["
+                "{\"fingerprint\":\"...\",\"label\":\"...\"}]}."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "repo": slug,
+                    "pr_number": pr_number,
+                    "pr_title": pr_title,
+                    "files_scanned": files_scanned,
+                    "degraded_modules": degraded_reasons,
+                    "findings": findings_payload,
+                },
+                ensure_ascii=False,
+            ),
+        },
+    ]
+    schema = {
+        "type": "object",
+        "properties": {"summary": {"type": "string"}},
+        "required": ["summary"],
+    }
+    try:
+        completion = await LLMRouter().complete(
+            role="judge",
+            messages=messages,
+            schema=schema,
+            max_tokens=1200,
+        )
+        text = completion.content.strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        data = json.loads(text[start:end + 1] if start >= 0 and end > start else text)
+        summary = str(data.get("summary") or "").strip()
+        labels: dict[str, str] = {}
+        raw_labels = data.get("finding_labels") or []
+        if isinstance(raw_labels, list):
+            for item in raw_labels:
+                if not isinstance(item, dict):
+                    continue
+                fp = str(item.get("fingerprint") or "").strip()
+                label = str(item.get("label") or "").strip()
+                if fp and label:
+                    labels[fp] = " ".join(label.split()[:5])
+        return summary or fallback, labels or fallback_labels
+    except Exception as exc:
+        log.warning("simple_scan.summary_failed", error=str(exc))
+        return fallback, fallback_labels
+
+
+async def _generate_scan_summary(
+    slug: str,
+    pr_number: int,
+    pr_title: str,
+    files_scanned: int,
+    findings: list[Finding],
+    degraded_reasons: list[str],
+    lang: str = "ru",
+) -> str:
+    summary, _labels = await _generate_scan_review(
+        slug,
+        pr_number,
+        pr_title,
+        files_scanned,
+        findings,
+        degraded_reasons,
+        lang=lang,
+    )
+    return summary
+
+
+async def run_simple_scan(
+    url: str,
+    token: str | None = None,
+    lang: str = "ru",
+) -> SimpleScanResult:
     """Main entry point: GitHub URL → analysis result."""
     try:
         slug, pr_number = _parse_github_url(url)
@@ -292,6 +612,7 @@ async def run_simple_scan(url: str, token: str | None = None) -> SimpleScanResul
     pr_title = pr_data.get("title", f"PR #{pr_number}")
     pr_url = pr_data.get("html_url", url)
     pr_author = (pr_data.get("user") or {}).get("login", "unknown")
+    head_sha = ((pr_data.get("head") or {}).get("sha") or "")
 
     # Fetch unified diff
     try:
@@ -318,7 +639,7 @@ async def run_simple_scan(url: str, token: str | None = None) -> SimpleScanResul
     det_findings = scan_secrets(code_files)
 
     # LLM scan (local models with sequential swap, or cloud fallback)
-    findings, degraded = await _run_llm(slug, pr_number, code_files, det_findings)
+    findings, degraded_reasons = await _run_llm(slug, pr_number, code_files, det_findings)
 
     # Free memory — unload LLM after scan completes
     try:
@@ -332,6 +653,15 @@ async def run_simple_scan(url: str, token: str | None = None) -> SimpleScanResul
     # Sort by severity
     _sev_order = {Severity.CRITICAL: 0, Severity.HIGH: 1, Severity.MEDIUM: 2, Severity.LOW: 3}
     findings.sort(key=lambda f: _sev_order.get(f.severity, 9))
+    summary, finding_labels = await _generate_scan_review(
+        slug,
+        pr_number,
+        pr_title,
+        files_scanned,
+        findings,
+        degraded_reasons,
+        lang=lang,
+    )
 
     return SimpleScanResult(
         repo=slug,
@@ -341,5 +671,10 @@ async def run_simple_scan(url: str, token: str | None = None) -> SimpleScanResul
         pr_author=pr_author,
         findings=findings,
         files_scanned=files_scanned,
-        degraded=degraded,
+        degraded=bool(degraded_reasons),
+        degraded_reasons=degraded_reasons,
+        files_scanned_paths=[f.path for f in code_files],
+        head_sha=head_sha,
+        summary=summary,
+        finding_labels=finding_labels,
     )

@@ -1,0 +1,228 @@
+{
+  "name": "aegis-security",
+  "displayName": "Aegis Security Review",
+  "description": "AI-powered security code review: findings, auto-fix, and agent chat",
+  "version": "0.1.0",
+  "publisher": "aegis",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Nikita56792/Don" },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onUri"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsWelcome": [
+      {
+        "view": "aegis.prTree",
+        "contents": "**Welcome to Aegis Security Review**\n\nSign in to see pull requests and security findings from your connected repositories.\n\n[$(key) Sign In](command:aegis.login)\n\nNo account yet? Open the Aegis web UI to register.\n[$(link-external) Open Web UI](command:aegis.openWebUI)",
+        "when": "!aegis.isAuthenticated"
+      },
+      {
+        "view": "aegis.prTree",
+        "contents": "No repositories connected yet.\n\nOpen the Aegis web UI to connect your first repository.\n[$(link-external) Open Web UI](command:aegis.openWebUI)",
+        "when": "aegis.isAuthenticated && aegis.repoCount == 0"
+      },
+      {
+        "view": "aegis.findingsTree",
+        "contents": "No findings yet.\n\nRun a scan to see security findings here.\n\n[$(search) Scan Current Branch](command:aegis.scanCurrentBranch)\n[$(link) Scan PR by URL](command:aegis.scanURL)",
+        "when": "aegis.isAuthenticated"
+      }
+    ],
+    "commands": [
+      {
+        "command": "aegis.scanCurrentBranch",
+        "title": "Aegis: Scan Current Branch",
+        "icon": "$(search)"
+      },
+      {
+        "command": "aegis.openWebUI",
+        "title": "Aegis: Open Web UI"
+      },
+      {
+        "command": "aegis.scanCurrentFile",
+        "title": "Aegis: Scan Current File"
+      },
+      {
+        "command": "aegis.scanURL",
+        "title": "Aegis: Scan PR by URL"
+      },
+      {
+        "command": "aegis.refreshPRs",
+        "title": "Aegis: Refresh PR List",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "aegis.openPRDetail",
+        "title": "Aegis: Show PR Detail"
+      },
+      {
+        "command": "aegis.openChat",
+        "title": "Aegis: Ask Agent"
+      },
+      {
+        "command": "aegis.fixFinding",
+        "title": "Aegis: Fix This Finding"
+      },
+      {
+        "command": "aegis.fixAll",
+        "title": "Aegis: Fix All Findings"
+      },
+      {
+        "command": "aegis.markFalsePositive",
+        "title": "Aegis: Mark as False Positive"
+      },
+      {
+        "command": "aegis.configure",
+        "title": "Aegis: Configure"
+      },
+      {
+        "command": "aegis.login",
+        "title": "Aegis: Login"
+      },
+      {
+        "command": "aegis.hardenBranch",
+        "title": "Aegis: Harden Current Branch (Scan + Fix)"
+      },
+      {
+        "command": "aegis.scanPR",
+        "title": "Scan PR",
+        "icon": "$(search)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aegis-sidebar",
+          "title": "Aegis Security",
+          "icon": "resources/icons/aegis.svg"
+        }
+      ]
+    },
+    "views": {
+      "aegis-sidebar": [
+        {
+          "id": "aegis.prTree",
+          "name": "Pull Requests"
+        },
+        {
+          "id": "aegis.findingsTree",
+          "name": "Current Findings"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "aegis.refreshPRs",
+          "when": "view == aegis.prTree",
+          "group": "navigation"
+        },
+        {
+          "command": "aegis.scanCurrentBranch",
+          "when": "view == aegis.findingsTree",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "aegis.scanPR",
+          "when": "viewItem == aegisPR",
+          "group": "inline"
+        },
+        {
+          "command": "aegis.scanPR",
+          "when": "viewItem == aegisPR",
+          "group": "aegis@1"
+        },
+        {
+          "command": "aegis.openPRDetail",
+          "when": "viewItem == aegisPR",
+          "group": "aegis@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "aegis.openChat",
+          "group": "aegis",
+          "when": "aegis.hasFindingAtCursor"
+        },
+        {
+          "command": "aegis.fixFinding",
+          "group": "aegis",
+          "when": "aegis.hasFindingAtCursor"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Aegis Security",
+      "properties": {
+        "aegis.backendUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "Aegis backend URL"
+        },
+        "aegis.autoScanOnBranchChange": {
+          "type": "boolean",
+          "default": false,
+          "description": "Auto-scan when switching branches"
+        },
+        "aegis.autoScanOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Auto-scan on file save (diff mode)"
+        },
+        "aegis.showInlineDecorations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline finding decorations in editor"
+        },
+        "aegis.severityGate": {
+          "type": "string",
+          "enum": [
+            "info",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "default": "medium",
+          "description": "Minimum severity to show"
+        },
+        "aegis.language": {
+          "type": "string",
+          "enum": [
+            "ru",
+            "en"
+          ],
+          "default": "ru",
+          "description": "Language for AI summaries and agent responses"
+        },
+        "aegis.githubToken": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub Personal Access Token for PR listing"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.1",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  }
+}
