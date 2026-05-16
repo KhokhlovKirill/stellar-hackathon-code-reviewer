@@ -22,6 +22,10 @@ function QuickConnectDoneContent() {
     );
   }
 
+  const provider = result.provider ?? "github";
+  const isGitLab = provider === "gitlab";
+  const providerName = isGitLab ? "GitLab" : "GitHub";
+  const prName = isGitLab ? "Merge Request" : "Pull Request";
   const autoHook = Boolean(result.github_hook_id);
 
   return (
@@ -50,6 +54,12 @@ function QuickConnectDoneContent() {
             </code>
           </div>
           <div className="px-6 py-4 flex items-center justify-between gap-4">
+            <span className="text-sm text-slate-500 shrink-0">Secret token</span>
+            <code className="text-xs font-mono bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-lg text-slate-700 dark:text-slate-300 break-all text-right">
+              {result.webhook_secret}
+            </code>
+          </div>
+          <div className="px-6 py-4 flex items-center justify-between gap-4">
             <span className="text-sm text-slate-500 shrink-0">Статус webhook</span>
             <span className={`text-xs font-medium px-2.5 py-1 rounded-full border ${
               autoHook
@@ -74,16 +84,22 @@ function QuickConnectDoneContent() {
             <div>
               <p className="font-semibold text-amber-700 dark:text-amber-300 text-sm mb-1">Webhook не зарегистрирован автоматически</p>
               <p className="text-amber-600 dark:text-amber-300/70 text-xs leading-relaxed">
-                Ваш токен не имеет прав <code className="bg-amber-100 dark:bg-amber-500/20 px-1 rounded">admin:repo_hook</code>. Добавьте webhook вручную:
+                {autoHook
+                  ? ""
+                  : `Добавьте webhook в ${providerName} вручную или выдайте токену права на управление webhook'ами.`}
               </p>
             </div>
           </div>
           <ol className="space-y-2 text-xs text-amber-700 dark:text-amber-300/80 ml-7">
             {[
-              "Репозиторий → Settings → Webhooks → Add webhook",
+              isGitLab
+                ? "Project → Settings → Webhooks → Add new webhook"
+                : "Repository → Settings → Webhooks → Add webhook",
               <>Payload URL: <code className="bg-amber-100 dark:bg-amber-500/20 px-1.5 py-0.5 rounded text-amber-800 dark:text-amber-200">{result.webhook_url}</code></>,
-              <>Content type: <strong>application/json</strong></>,
-              <>Events: <strong>Pull requests</strong></>,
+              isGitLab
+                ? <>Secret token: <code className="bg-amber-100 dark:bg-amber-500/20 px-1.5 py-0.5 rounded text-amber-800 dark:text-amber-200">{result.webhook_secret}</code></>
+                : <>Content type: <strong>application/json</strong>, Secret: <code className="bg-amber-100 dark:bg-amber-500/20 px-1.5 py-0.5 rounded text-amber-800 dark:text-amber-200">{result.webhook_secret}</code></>,
+              <>Events: <strong>{isGitLab ? "Merge request events + Comments" : "Pull requests + Issue comments"}</strong></>,
             ].map((text, i) => (
               <li key={i} className="flex gap-2">
                 <span className="shrink-0 font-bold text-amber-500">{i + 1}.</span>
@@ -96,9 +112,9 @@ function QuickConnectDoneContent() {
 
       {autoHook && (
         <div className="bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 rounded-2xl p-5 mb-5">
-          <p className="font-semibold text-emerald-700 dark:text-emerald-300 text-sm mb-2">Webhook зарегистрирован на GitHub ✓</p>
+          <p className="font-semibold text-emerald-700 dark:text-emerald-300 text-sm mb-2">Webhook зарегистрирован на {providerName} ✓</p>
           <p className="text-emerald-600 dark:text-emerald-300/70 text-xs leading-relaxed">
-            Откройте Pull Request в <strong>{result.slug}</strong> — Aegis автоматически проверит его безопасность.
+            Откройте {prName} в <strong>{result.slug}</strong> — Aegis автоматически проверит его безопасность.
           </p>
         </div>
       )}
@@ -108,13 +124,13 @@ function QuickConnectDoneContent() {
         <p className="text-sm font-semibold text-slate-900 dark:text-white mb-3">Следующие шаги:</p>
         <ol className="space-y-2">
           {[
-            { text: "Убедитесь, что SSH-туннель запущен:", code: "bash start_tunnel.sh" },
-            { text: "Откройте Pull Request в репозитории" },
+            { text: `Откройте или обновите ${prName} в подключённом репозитории` },
             { text: "Результаты анализа появятся на дашборде проекта" },
-          ].map(({ text, code }, i) => (
+            { text: "Исторические PR/MR можно сканировать вручную из списка проекта или из VS Code" },
+          ].map(({ text }, i) => (
             <li key={i} className="flex gap-3 text-sm text-slate-600 dark:text-slate-400">
               <span className="shrink-0 flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-xs font-bold">{i + 1}</span>
-              <span className="flex-1">{text}{code && <code className="ml-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs px-2 py-0.5 rounded-md font-mono">{code}</code>}</span>
+              <span className="flex-1">{text}</span>
             </li>
           ))}
         </ol>

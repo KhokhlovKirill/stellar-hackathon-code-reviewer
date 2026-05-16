@@ -9,8 +9,8 @@ const HOST = "aegis.khokhlovkirill.ru";
 
 function BrowserMockup({ children, url }: { children: React.ReactNode; url?: string }) {
   return (
-    <div className="rounded-2xl overflow-hidden shadow-2xl shadow-black/40 border border-white/10 bg-[#1e1e2e]">
-      <div className="flex items-center gap-2 px-4 py-3 bg-[#16161e] border-b border-white/5">
+    <div className="max-w-full rounded-xl sm:rounded-2xl overflow-hidden shadow-2xl shadow-black/40 border border-white/10 bg-[#1e1e2e]">
+      <div className="flex items-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3 bg-[#16161e] border-b border-white/5">
         <div className="flex gap-1.5">
           <div className="w-3 h-3 rounded-full bg-red-500/80" />
           <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
@@ -29,14 +29,14 @@ function BrowserMockup({ children, url }: { children: React.ReactNode; url?: str
 
 function VSCodeMockup({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl overflow-hidden shadow-2xl shadow-black/40 border border-white/10 bg-[#1e1e1e]">
-      <div className="flex items-center gap-2 px-4 py-2.5 bg-[#323233] border-b border-black/30">
+    <div className="max-w-full rounded-xl sm:rounded-2xl overflow-hidden shadow-2xl shadow-black/40 border border-white/10 bg-[#1e1e1e]">
+      <div className="flex items-center gap-2 px-3 sm:px-4 py-2.5 bg-[#323233] border-b border-black/30">
         <div className="flex gap-1.5">
           <div className="w-3 h-3 rounded-full bg-red-500/80" />
           <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
           <div className="w-3 h-3 rounded-full bg-green-500/80" />
         </div>
-        <span className="text-xs text-slate-400 ml-2 font-mono">my-project — Visual Studio Code</span>
+        <span className="min-w-0 truncate text-xs text-slate-400 ml-2 font-mono">my-project — Visual Studio Code</span>
       </div>
       {children}
     </div>
@@ -47,8 +47,8 @@ function VSCodeMockup({ children }: { children: React.ReactNode }) {
 
 function MockWebDashboard() {
   return (
-    <div className="bg-[#020617] p-4 text-xs font-mono min-h-[260px] flex gap-3">
-      <div className="w-44 shrink-0 space-y-1">
+    <div className="bg-[#020617] p-3 sm:p-4 text-[10px] sm:text-xs font-mono min-h-[260px] flex flex-col sm:flex-row gap-3">
+      <div className="w-full sm:w-44 shrink-0 space-y-1">
         <div className="text-slate-500 text-[10px] uppercase tracking-wider mb-2 px-2">Проекты</div>
         {["backend-api", "mobile-app", "data-pipeline"].map((p, i) => (
           <div key={p} className={`px-2 py-1.5 rounded-lg flex items-center gap-2 ${i === 0 ? "bg-indigo-500/20 text-indigo-300" : "text-slate-500"}`}>
@@ -88,12 +88,12 @@ function MockWebDashboard() {
 function MockVSCode() {
   return (
     <div className="flex min-h-[260px]">
-      <div className="w-10 bg-[#333333] flex flex-col items-center pt-3 gap-3 border-r border-black/30">
+      <div className="w-8 sm:w-10 bg-[#333333] flex flex-col items-center pt-3 gap-3 border-r border-black/30">
         {["M", "⬡", "🛡", "⚙"].map((icon, i) => (
           <div key={i} className={`text-xs w-6 h-6 flex items-center justify-center rounded ${i === 2 ? "text-white" : "text-slate-500"}`}>{icon}</div>
         ))}
       </div>
-      <div className="w-52 bg-[#252526] border-r border-black/20 text-[10px] font-mono">
+      <div className="w-32 sm:w-52 bg-[#252526] border-r border-black/20 text-[9px] sm:text-[10px] font-mono">
         <div className="px-3 py-2 text-[9px] uppercase tracking-wider text-slate-500 border-b border-black/20">Aegis Security</div>
         <div className="px-2 py-1.5">
           <div className="text-slate-400 text-[9px] uppercase tracking-wider mb-1.5">Репозитории</div>
@@ -123,7 +123,7 @@ function MockVSCode() {
           </div>
         </div>
       </div>
-      <div className="flex-1 bg-[#1e1e1e] p-3 font-mono text-[10px] overflow-hidden">
+      <div className="flex-1 min-w-0 bg-[#1e1e1e] p-2 sm:p-3 font-mono text-[9px] sm:text-[10px] overflow-hidden">
         <div className="text-slate-500 mb-2">auth/jwt.py</div>
         <div className="space-y-0.5 leading-relaxed">
           <div><span className="text-slate-600 w-5 inline-block text-right mr-3">40</span><span className="text-blue-400">def</span> <span className="text-yellow-300">create_token</span><span className="text-slate-300">(user_id):</span></div>
@@ -183,7 +183,7 @@ function MockScanSummary() {
         <span className="text-slate-400 text-[11px] font-semibold">Итоги сканирования PR #47</span>
         <span className="text-emerald-400 text-[10px]">✓ завершено за 18 сек</span>
       </div>
-      <div className="grid grid-cols-4 gap-2 mb-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
         {[
           { label: "Критических", val: "3", cls: "text-red-400 bg-red-500/10 border-red-500/20" },
           { label: "Высоких",     val: "2", cls: "text-orange-400 bg-orange-500/10 border-orange-500/20" },
@@ -223,7 +223,7 @@ function Step({ n, icon, title, desc }: { n: number; icon: string; title: string
 
 function FeatureCard({ icon, title, desc }: { icon: string; title: string; desc: string }) {
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-indigo-300 dark:hover:border-indigo-500/40 hover:shadow-lg hover:shadow-indigo-500/5 transition-all">
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl sm:rounded-2xl p-4 sm:p-5 hover:border-indigo-300 dark:hover:border-indigo-500/40 hover:shadow-lg hover:shadow-indigo-500/5 transition-all">
       <div className="text-2xl mb-3">{icon}</div>
       <h4 className="font-bold text-slate-900 dark:text-white mb-1.5">{title}</h4>
       <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">{desc}</p>
@@ -250,36 +250,36 @@ export function LandingPage() {
     <div className="overflow-x-hidden">
 
       {/* ── Hero ─────────────────────────────────────────────────────────────── */}
-      <section className="relative min-h-[90vh] flex items-center overflow-hidden">
+      <section className="relative min-h-[auto] lg:min-h-[90vh] flex items-center overflow-hidden">
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute top-[-20%] left-[10%] w-[600px] h-[600px] rounded-full bg-indigo-600/20 blur-[120px]" />
           <div className="absolute bottom-[-10%] right-[5%] w-[500px] h-[500px] rounded-full bg-violet-600/15 blur-[120px]" />
         </div>
 
-        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 py-24 w-full">
-          <div className="grid lg:grid-cols-2 gap-16 items-center">
+        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 py-12 sm:py-16 lg:py-24 w-full">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
             <div>
               <div className="inline-flex items-center gap-2 bg-indigo-500/10 border border-indigo-500/20 rounded-full px-4 py-1.5 text-sm text-indigo-400 mb-6">
                 <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
                 AI-ревью безопасности кода
               </div>
 
-              <h1 className="text-5xl sm:text-6xl font-black leading-[1.05] tracking-tight text-slate-900 dark:text-white mb-6">
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] tracking-tight text-slate-900 dark:text-white mb-6">
                 Находи уязвимости{" "}
                 <span className="bg-gradient-to-r from-indigo-400 via-violet-400 to-indigo-500 bg-clip-text text-transparent">
                   до ревью
                 </span>
               </h1>
 
-              <p className="text-xl text-slate-500 dark:text-slate-400 leading-relaxed mb-8 max-w-lg">
+              <p className="text-base sm:text-lg lg:text-xl text-slate-500 dark:text-slate-400 leading-relaxed mb-8 max-w-lg">
                 Aegis анализирует pull request'ы с помощью ансамбля языковых моделей, находит SQL-инъекции, XSS, захардкоженные ключи и 50+ классов уязвимостей — прямо в VS Code или в браузере.
               </p>
 
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
                 <a
 href="/aegis-security-0.2.0.vsix"
                   download
-                  className="inline-flex items-center gap-2.5 px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-base transition-all shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
+                  className="inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-base transition-all shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
                 >
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -290,14 +290,14 @@ href="/aegis-security-0.2.0.vsix"
                 {user ? (
                   <Link
                     to="/dashboard"
-                    className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-semibold text-base transition-all hover:-translate-y-0.5"
+                    className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-semibold text-base transition-all hover:-translate-y-0.5"
                   >
                     Открыть дашборд
                   </Link>
                 ) : (
                   <Link
                     to="/register"
-                    className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-semibold text-base transition-all hover:-translate-y-0.5"
+                    className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-semibold text-base transition-all hover:-translate-y-0.5"
                   >
                     Попробовать
                   </Link>
@@ -345,7 +345,7 @@ href="/aegis-security-0.2.0.vsix"
                   </VSCodeMockup>
                 )}
 
-                <div className="absolute -bottom-4 -right-4 bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg shadow-emerald-500/30">
+                <div className="absolute -bottom-3 right-2 sm:-bottom-4 sm:-right-4 bg-emerald-500 text-white text-[11px] sm:text-xs font-bold px-3 py-1.5 rounded-full shadow-lg shadow-emerald-500/30">
                   3 уязвимости найдено
                 </div>
               </div>
@@ -365,15 +365,15 @@ href="/aegis-security-0.2.0.vsix"
       </section>
 
       {/* ── How it works ─────────────────────────────────────────────────────── */}
-      <section className="py-24 mx-auto max-w-7xl px-4 sm:px-6">
+      <section className="py-14 sm:py-20 lg:py-24 mx-auto max-w-7xl px-4 sm:px-6">
         <div className="text-center mb-16">
           <div className="inline-flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 rounded-full px-4 py-1.5 text-sm text-violet-400 mb-4">
             Как это работает
           </div>
-          <h2 className="text-4xl font-black text-slate-900 dark:text-white">От кода до исправления за минуту</h2>
+          <h2 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white">От кода до исправления за минуту</h2>
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-16 items-start">
+        <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-start">
           <div className="space-y-0">
             <Step n={1} icon="🔐" title="Войди и подключи репозиторий"
               desc="Зарегистрируйся на веб-платформе или установи расширение VS Code. Подключи GitHub-репозиторий — Aegis увидит все ветки и запросы на слияние." />
@@ -397,10 +397,10 @@ href="/aegis-security-0.2.0.vsix"
       </section>
 
       {/* ── Product split ────────────────────────────────────────────────────── */}
-      <section className="py-24 bg-slate-50 dark:bg-slate-950/50">
+      <section className="py-14 sm:py-20 lg:py-24 bg-slate-50 dark:bg-slate-950/50">
         <div className="mx-auto max-w-7xl px-4 sm:px-6">
           <div className="text-center mb-16">
-            <h2 className="text-4xl font-black text-slate-900 dark:text-white mb-3">Два продукта, одна экосистема</h2>
+            <h2 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white mb-3">Два продукта, одна экосистема</h2>
             <p className="text-slate-500 dark:text-slate-400 text-lg max-w-2xl mx-auto">
               Веб-платформа и расширение VS Code синхронизированы — сканируй где удобно, смотри результаты везде.
             </p>
@@ -408,7 +408,7 @@ href="/aegis-security-0.2.0.vsix"
 
           <div className="grid lg:grid-cols-2 gap-8">
             {/* Web platform */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-8 hover:shadow-xl hover:shadow-indigo-500/5 transition-all">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-8 hover:shadow-xl hover:shadow-indigo-500/5 transition-all">
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-12 h-12 rounded-2xl bg-indigo-500/15 border border-indigo-500/20 flex items-center justify-center text-2xl">🌐</div>
                 <div>
@@ -423,14 +423,14 @@ href="/aegis-security-0.2.0.vsix"
                 </BrowserMockup>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FeatureCard icon="📋" title="Дашборд проектов" desc="Все репозитории и запросы на слияние с историей сканов" />
                 <FeatureCard icon="💬" title="AI-чат" desc="Стриминговый чат с контекстом конкретной уязвимости" />
                 <FeatureCard icon="🔗" title="Вебхуки" desc="Авто-скан при открытии запроса на слияние в GitHub/GitLab" />
                 <FeatureCard icon="📚" title="База знаний" desc="Справочник CWE/OWASP с примерами уязвимого и безопасного кода" />
               </div>
 
-              <div className="mt-6 flex gap-3">
+              <div className="mt-6 flex flex-col sm:flex-row gap-3">
                 <Link to="/register" className="flex-1 text-center py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition-all shadow-lg shadow-indigo-500/20">
                   Зарегистрироваться
                 </Link>
@@ -441,7 +441,7 @@ href="/aegis-security-0.2.0.vsix"
             </div>
 
             {/* VS Code extension */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-8 hover:shadow-xl hover:shadow-violet-500/5 transition-all">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-8 hover:shadow-xl hover:shadow-violet-500/5 transition-all">
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-12 h-12 rounded-2xl bg-violet-500/15 border border-violet-500/20 flex items-center justify-center text-2xl">⬡</div>
                 <div>
@@ -456,7 +456,7 @@ href="/aegis-security-0.2.0.vsix"
                 </VSCodeMockup>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FeatureCard icon="🌳" title="Боковая панель" desc="Дерево репозиториев и запросов на слияние прямо в IDE" />
                 <FeatureCard icon="⚠️" title="Встроенная диагностика" desc="Подсветка и подсказки в коде для каждой уязвимости" />
                 <FeatureCard icon="🤖" title="Исправление в один клик" desc="AI генерирует и применяет патч не выходя из редактора" />
@@ -484,9 +484,9 @@ href="/aegis-security-0.2.0.vsix"
       </section>
 
       {/* ── Full workflow ─────────────────────────────────────────────────────── */}
-      <section className="py-24 mx-auto max-w-7xl px-4 sm:px-6">
+      <section className="py-14 sm:py-20 lg:py-24 mx-auto max-w-7xl px-4 sm:px-6">
         <div className="text-center mb-12">
-          <h2 className="text-4xl font-black text-slate-900 dark:text-white mb-3">Полный процесс в VS Code</h2>
+          <h2 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white mb-3">Полный процесс в VS Code</h2>
           <p className="text-slate-500 dark:text-slate-400">От открытия запроса на слияние до применённого патча — без выхода из редактора</p>
         </div>
 
@@ -531,24 +531,24 @@ href="/aegis-security-0.2.0.vsix"
       </section>
 
       {/* ── Final CTA ────────────────────────────────────────────────────────── */}
-      <section className="py-24 relative overflow-hidden">
+      <section className="py-14 sm:py-20 lg:py-24 relative overflow-hidden">
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute inset-0 bg-gradient-to-r from-indigo-600/10 via-violet-600/10 to-indigo-600/10" />
         </div>
         <div className="relative mx-auto max-w-3xl px-4 text-center">
           <AegisLogo size={56} className="mx-auto mb-6" />
-          <h2 className="text-5xl font-black text-slate-900 dark:text-white mb-4">
+          <h2 className="text-3xl sm:text-5xl font-black text-slate-900 dark:text-white mb-4">
             Начни сканировать<br />
             <span className="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">уже сегодня</span>
           </h2>
           <p className="text-lg text-slate-500 dark:text-slate-400 mb-10">
             Ансамбль языковых моделей анализирует код и предлагает точные исправления.
           </p>
-          <div className="flex flex-wrap justify-center gap-4">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap justify-center gap-4">
             <a
 href="/aegis-security-0.2.0.vsix"
               download
-              className="inline-flex items-center gap-2.5 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-lg transition-all shadow-2xl shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
+              className="inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-lg transition-all shadow-2xl shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -558,14 +558,14 @@ href="/aegis-security-0.2.0.vsix"
             {user ? (
               <Link
                 to="/dashboard"
-                className="inline-flex items-center gap-2 px-8 py-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-bold text-lg transition-all hover:-translate-y-0.5"
+                className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-bold text-lg transition-all hover:-translate-y-0.5"
               >
                 Перейти в дашборд
               </Link>
             ) : (
               <Link
                 to="/register"
-                className="inline-flex items-center gap-2 px-8 py-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-bold text-lg transition-all hover:-translate-y-0.5"
+                className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-900 dark:text-white font-bold text-lg transition-all hover:-translate-y-0.5"
               >
                 Зарегистрироваться
               </Link>

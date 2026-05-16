@@ -34,6 +34,7 @@ export interface PRInfo {
   url: string;
   head_branch: string;
   base_branch: string;
+  state?: string;
   created_at: string;
   updated_at: string;
   draft: boolean;

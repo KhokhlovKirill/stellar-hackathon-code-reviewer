@@ -67,7 +67,9 @@ ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
 testpaths = ["tests"]
 filterwarnings = ["error"]
 

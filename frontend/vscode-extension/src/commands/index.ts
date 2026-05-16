@@ -12,8 +12,8 @@ import * as fs from "fs";
 import type { AegisCodeLensProvider } from "../providers/codeLensProvider";
 import type { Finding, ScanResult } from "../types";
 import { getSeverityGate } from "../config";
-import type { PRNode, ScanNode } from "../providers/prTreeProvider";
-// PRNode imported for aegis.scanPR and aegis.openPRDetail argument typing
+import type { PRNode, RepoNode, ScanNode } from "../providers/prTreeProvider";
+// Tree nodes imported for scan/open command argument typing.
 
 interface CommandDeps {
   context: vscode.ExtensionContext;
@@ -511,6 +511,66 @@ export function registerAllCommands(deps: CommandDeps): vscode.Disposable[] {
             } catch (err) {
               setStatus(statusBar, "Scan failed");
               vscode.window.showErrorMessage(`Aegis: PR scan failed: ${err}`);
+            }
+          }
+        );
+      }
+    )
+  );
+
+  // ---------------------------------------------------------------------------
+  // aegis.openPRDetail
+  // ---------------------------------------------------------------------------
+  disposables.push(
+    vscode.commands.registerCommand(
+      "aegis.scanRepo",
+      async (node: RepoNode | undefined) => {
+        if (!node) return;
+
+        const label = node.repo.slug;
+        setStatus(statusBar, `Scanning repository ${label}...`);
+
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Aegis: Scanning repository ${label}`,
+            cancellable: false,
+          },
+          async (progress) => {
+            progress.report({ message: "Fetching default branch and running full repository analysis..." });
+            try {
+              const result = await client.scanRepo(node.repo.id);
+              currentScan.value = result;
+
+              diagnostics.loadFindingsForScan(result, getSeverityGate());
+              codeLens.refresh();
+              findingsTree.loadScanResult(result, getSeverityGate());
+              prTree.loadData().catch(() => {});
+
+              const panel = panelManager.getOrCreatePRDetailPanel(
+                result,
+                (msg) => handlePRDetailMessage(msg, deps, result)
+              );
+              panel.title = `Aegis: ${label}`;
+
+              const crit = result.findings.filter(
+                (f) => f.severity === "critical" || f.severity === "high"
+              ).length;
+              const summary = `${result.findings.length} findings (${crit} critical/high)`;
+              setStatus(statusBar, summary);
+
+              if (result.findings.length === 0) {
+                vscode.window.showInformationMessage(
+                  `Aegis: Repository ${label} looks clean.`
+                );
+              } else {
+                vscode.window.showWarningMessage(
+                  `Aegis: Repository ${label} — ${summary}`
+                );
+              }
+            } catch (err) {
+              setStatus(statusBar, "Scan failed");
+              vscode.window.showErrorMessage(`Aegis: repository scan failed: ${err}`);
             }
           }
         );

@@ -95,6 +95,11 @@
         "command": "aegis.scanPR",
         "title": "Scan PR",
         "icon": "$(search)"
+      },
+      {
+        "command": "aegis.scanRepo",
+        "title": "Scan Repository",
+        "icon": "$(repo)"
       }
     ],
     "viewsContainers": {
@@ -140,6 +145,16 @@
         {
           "command": "aegis.scanPR",
           "when": "viewItem == aegisPR",
+          "group": "aegis@1"
+        },
+        {
+          "command": "aegis.scanRepo",
+          "when": "viewItem == aegisRepo",
+          "group": "inline"
+        },
+        {
+          "command": "aegis.scanRepo",
+          "when": "viewItem == aegisRepo",
           "group": "aegis@1"
         },
         {

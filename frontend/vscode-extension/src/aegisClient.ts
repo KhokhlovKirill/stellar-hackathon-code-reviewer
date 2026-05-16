@@ -184,6 +184,15 @@ export class AegisClient {
     );
   }
 
+  async scanRepo(repoId: number): Promise<ScanResult> {
+    return this.fetch<ScanResult>(
+      "POST",
+      "/api/ext/scan/repo",
+      { repo_id: repoId, lang: this.language },
+      true
+    );
+  }
+
   async scanBranch(
     diff: string,
     repoSlug: string,

@@ -131,6 +131,7 @@ class PRInfoOut(BaseModel):
     url: str
     head_branch: str
     base_branch: str
+    state: str = ""
     created_at: str
     updated_at: str
     draft: bool
@@ -790,7 +791,10 @@ async def list_repo_prs(repo_id: int, user: User = _user_dep) -> list[PRInfoOut]
         raise HTTPException(status_code=502, detail=f"GitHub API call failed: {exc}") from exc
 
     # Fetch last scan for each PR from DB
-    pr_numbers = [pr["number"] for pr in prs_data]
+    pr_numbers = [
+        int((pr.get("iid") if repo.provider == "gitlab" else pr.get("number")) or 0)
+        for pr in prs_data
+    ]
     pr_id_strs = [str(n) for n in pr_numbers]
 
     async with get_session() as session:
@@ -823,12 +827,14 @@ async def list_repo_prs(repo_id: int, user: User = _user_dep) -> list[PRInfoOut]
             head_branch = pr.get("source_branch", "")
             base_branch = pr.get("target_branch", "")
             draft = bool(pr.get("draft") or pr.get("work_in_progress"))
+            state = pr.get("state", "")
         else:
             author = (pr.get("user") or {}).get("login", "")
             url = pr.get("html_url", "")
             head_branch = (pr.get("head") or {}).get("ref", "")
             base_branch = (pr.get("base") or {}).get("ref", "")
             draft = bool(pr.get("draft", False))
+            state = pr.get("state", "")
         out.append(
             PRInfoOut(
                 pr_number=pr_num,
@@ -837,6 +843,7 @@ async def list_repo_prs(repo_id: int, user: User = _user_dep) -> list[PRInfoOut]
                 url=url,
                 head_branch=head_branch,
                 base_branch=base_branch,
+                state=state,
                 created_at=pr.get("created_at", ""),
                 updated_at=pr.get("updated_at", ""),
                 draft=draft,
@@ -1143,6 +1150,11 @@ class ScanPRRequest(BaseModel):
     engine: str = "auto"  # auto | graph | direct — see ScanUrlRequest.engine
 
 
+class ScanRepoRequest(BaseModel):
+    repo_id: int
+    lang: str = "ru"
+
+
 @router.post("/scan/pr", response_model=ScanUrlResponse)
 async def scan_pr(req: ScanPRRequest, user: User = _user_dep) -> ScanUrlResponse:
     """Scan a registered PR using the stored repo access token. Auth required."""
@@ -1172,6 +1184,34 @@ async def scan_pr(req: ScanPRRequest, user: User = _user_dep) -> ScanUrlResponse
         access_token,
         req.lang,
         getattr(req, "engine", "auto"),
+    )
+
+
+@router.post("/scan/repo", response_model=ScanUrlResponse)
+async def scan_repo(req: ScanRepoRequest, user: User = _user_dep) -> ScanUrlResponse:
+    """Scan the default branch of a registered GitHub/GitLab repository."""
+    async with get_session() as session:
+        repo = (
+            await session.execute(
+                select(Repository).where(Repository.id == req.repo_id)
+            )
+        ).scalar_one_or_none()
+        if repo is None:
+            raise HTTPException(status_code=404, detail="repo not found")
+
+        if repo.project_id is not None:
+            project = (
+                await session.execute(
+                    select(Project).where(Project.id == repo.project_id)
+                )
+            ).scalar_one_or_none()
+            if project is None or project.owner_id != user.id:
+                raise HTTPException(status_code=404, detail="repo not found")
+
+    return await _scan_registered_repo_response(
+        repo,
+        await _get_repo_access_token(repo),
+        req.lang,
     )
 
 

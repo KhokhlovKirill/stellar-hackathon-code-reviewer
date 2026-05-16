@@ -68,12 +68,14 @@ def _state() -> PipelineState:
     return PipelineState(scan_id="s1", ev=ev, pr=pr, ctx=None, result=res, files=[])  # type: ignore[arg-type]
 
 
+@pytest.mark.asyncio
 async def test_kb_enrich_noop_when_no_findings() -> None:
     state = _state()
     await enrich_with_kb(state)
     assert state.kb_matches == {}
 
 
+@pytest.mark.asyncio
 async def test_kb_enrich_annotates_on_hit(monkeypatch: pytest.MonkeyPatch) -> None:
     from aegis.kb.store import SimilarHit
 

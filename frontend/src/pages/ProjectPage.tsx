@@ -97,17 +97,28 @@ function ProjectContent() {
     const form = e.currentTarget;
     const fd = new FormData(form);
     try {
-      await api.addRepo(id, {
-        provider:       String(fd.get("provider") ?? "github"),
+      const provider = String(fd.get("provider") ?? "github");
+      const webhookSecret = String(fd.get("webhook_secret") ?? "");
+      const publicUrl = String(fd.get("public_url") ?? DEFAULT_PUBLIC_URL).replace(/\/$/, "");
+      const repo = await api.addRepo(id, {
+        provider,
         external_id:    String(fd.get("external_id") ?? ""),
         slug:           String(fd.get("slug") ?? ""),
         access_token:   String(fd.get("access_token") ?? ""),
-        webhook_secret: String(fd.get("webhook_secret") ?? ""),
+        webhook_secret: webhookSecret,
         severity_gate:  String(fd.get("severity_gate") ?? "medium"),
         merge_block:    String(fd.get("merge_block") ?? "critical"),
       });
       form.reset();
-      await load();
+      goQuickConnectDone({
+        repo_id: repo.id,
+        slug: repo.slug,
+        external_id: repo.external_id,
+        webhook_secret: webhookSecret,
+        webhook_url: `${publicUrl}/webhooks/${provider}`,
+        github_hook_id: null,
+        provider,
+      });
     } catch (err) {
       setError(err instanceof ApiError ? (err.detail ?? err.message) : "Ошибка подключения");
     }
@@ -360,6 +371,9 @@ function ProjectContent() {
                 </FormField>
                 <FormField label="Webhook secret">
                   <TextInput name="webhook_secret" type="password" required />
+                </FormField>
+                <FormField label="Публичный URL" hint={`Webhook: ${DEFAULT_PUBLIC_URL}/webhooks/{provider}`}>
+                  <TextInput name="public_url" required defaultValue={DEFAULT_PUBLIC_URL} />
                 </FormField>
                 <FormField label="Порог серьёзности">
                   <PillSelect name="severity_gate" options={SEVERITY_OPTIONS} defaultValue="medium" />

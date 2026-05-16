@@ -20,15 +20,16 @@ export class RepoNode extends vscode.TreeItem {
 
   constructor(
     public readonly repo: RepoInfo,
-    openPRCount: number
+    prCount: number
   ) {
     super(
       repo.slug,
-      openPRCount > 0
+      prCount > 0
         ? vscode.TreeItemCollapsibleState.Expanded
         : vscode.TreeItemCollapsibleState.Collapsed
     );
-    this.description = `${repo.project_name} • ${openPRCount} open PR${openPRCount !== 1 ? "s" : ""}`;
+    const kind = repo.provider === "gitlab" ? "MR" : "PR";
+    this.description = `${repo.project_name} • ${prCount} ${kind}${prCount !== 1 ? "s" : ""}`;
     this.iconPath = new vscode.ThemeIcon("repo");
     this.contextValue = "aegisRepo";
     this.tooltip = `${repo.provider}: ${repo.slug}\nStatus: ${repo.status}`;
@@ -63,9 +64,10 @@ export class PRNode extends vscode.TreeItem {
 
     this.contextValue = "aegisPR";
     this.tooltip = [
-      `PR #${pr.pr_number}: ${pr.title}`,
+      `${pr.url.includes("/merge_requests/") ? "MR" : "PR"} #${pr.pr_number}: ${pr.title}`,
       `Author: ${pr.author}`,
       `${pr.head_branch} → ${pr.base_branch}`,
+      pr.state ? `State: ${pr.state}` : "",
       pr.draft ? "(draft)" : "",
       lastScan ? `Last scan: ${lastScan.risk_label} risk` : "Not scanned",
     ]
@@ -233,7 +235,7 @@ export class PRTreeProvider
       case "repo":
         return element.children.length > 0
           ? element.children
-          : [new MessageNode("No open pull requests", "git-pull-request")];
+          : [new MessageNode("No pull/merge requests found", "git-pull-request")];
       case "pr":
         return element.children;
       default:

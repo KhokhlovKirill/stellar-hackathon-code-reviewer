@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from aegis.pipeline.policy import decide
 from aegis.pipeline.render import render_inline_comment, render_summary
 from aegis.pipeline.risk_score import compute_risk_score, risk_breakdown
@@ -92,6 +94,7 @@ def test_risk_breakdown_caps_duplicate_cwe() -> None:
     assert risk_breakdown(findings)["CWE-89"] == 80
 
 
+@pytest.mark.asyncio
 async def test_compute_risk_score_sets_state_and_result() -> None:
     state = _state([_finding()])
     await compute_risk_score(state)
