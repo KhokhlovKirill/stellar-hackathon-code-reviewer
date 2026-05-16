@@ -33,8 +33,9 @@ from aegis.db.models import (
 from aegis.llm.base import ChatMessage
 from aegis.llm.router import LLMRouter
 from aegis.obs import get_logger
+from aegis.pipeline.dispatch import run_scan
 from aegis.pipeline.risk_score import risk_breakdown, risk_label
-from aegis.pipeline.simple_scan import run_simple_scan
+from aegis.pipeline.simple_scan import run_simple_scan  # noqa: F401 (re-exported for tests)
 from aegis.schemas import Finding, Severity
 from aegis.vault import decrypt
 
@@ -59,6 +60,9 @@ class ScanUrlRequest(BaseModel):
     url: str = Field(min_length=1)
     token: str | None = None
     lang: str = "ru"
+    # "auto" = whatever AEGIS_USE_LANGGRAPH is set to (default); "graph" =
+    # force the LangGraph DAG; "direct" = force run_simple_scan.
+    engine: str = "auto"
 
 
 class FindingOut(BaseModel):
@@ -227,6 +231,20 @@ def _scan_summary_from_row(s: Scan) -> ScanSummaryOut:
     )
 
 
+def _engine_to_pref(engine: str | None) -> bool | None:
+    """Translate the request-level engine knob into the dispatcher argument.
+
+    "auto" / unknown → None (let the global Settings.use_langgraph decide);
+    "graph" → True (force the LangGraph orchestrator);
+    "direct" → False (force run_simple_scan).
+    """
+    if engine == "graph":
+        return True
+    if engine == "direct":
+        return False
+    return None
+
+
 def _gh_headers(token: str | None) -> dict[str, str]:
     h = dict(_GH_HEADERS)
     if token:
@@ -332,7 +350,12 @@ async def _persist_scan_result(
 @router.post("/scan/url", response_model=ScanUrlResponse)
 async def scan_url(req: ScanUrlRequest) -> ScanUrlResponse:
     """Scan a GitHub PR URL. No auth required."""
-    result = await run_simple_scan(req.url, req.token or None, lang=req.lang)
+    result = await run_scan(
+        req.url,
+        req.token or None,
+        lang=req.lang,
+        prefer_graph=_engine_to_pref(req.engine),
+    )
     if result.error:
         raise HTTPException(status_code=422, detail=result.error)
     scan_id = uuid.uuid4().hex
@@ -824,6 +847,7 @@ class ScanPRRequest(BaseModel):
     repo_id: int
     pr_number: int
     lang: str = "ru"
+    engine: str = "auto"  # auto | graph | direct — see ScanUrlRequest.engine
 
 
 @router.post("/scan/pr", response_model=ScanUrlResponse)
@@ -853,7 +877,12 @@ async def scan_pr(req: ScanPRRequest, user: User = _user_dep) -> ScanUrlResponse
     # Construct GitHub PR URL from slug + pr_number
     pr_url = f"https://github.com/{repo.slug}/pull/{req.pr_number}"
 
-    result = await run_simple_scan(pr_url, token=access_token, lang=req.lang)
+    result = await run_scan(
+        pr_url,
+        token=access_token,
+        lang=req.lang,
+        prefer_graph=_engine_to_pref(getattr(req, "engine", "auto")),
+    )
     if result.error:
         raise HTTPException(status_code=422, detail=result.error)
     scan_id = uuid.uuid4().hex

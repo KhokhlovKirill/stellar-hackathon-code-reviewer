@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     # Sequential model swap: unload previous model before loading next (saves RAM)
     lmstudio_swap_models: bool = Field(True, alias="LMSTUDIO_SWAP_MODELS")
 
+    # LangGraph orchestrator opt-in. When True, /api/ext/scan/* routes the
+    # pull-mode scan through the LangGraph DAG instead of the direct
+    # `run_simple_scan` path. Both paths share the same pipeline modules.
+    use_langgraph: bool = Field(False, alias="AEGIS_USE_LANGGRAPH")
+
     @field_validator("vault_key")
     @classmethod
     def _validate_vault_key(cls, v: str) -> str:

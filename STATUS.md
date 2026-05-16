@@ -1,6 +1,6 @@
 # Aegis — Статус проекта
 
-> Обновлено: 2026-05-16 (сессия 7)
+> Обновлено: 2026-05-16 (сессия 8)
 
 ---
 
@@ -230,6 +230,7 @@ nohup bash start_tunnel.sh > /tmp/aegis_tunnel.log 2>&1 &
 | Whole-PR Ask/Explain/Fix chat context | работает |
 | VS Code Apply Patch (sanitize + recount + path-resolve + multi-strategy) | работает |
 | Apply Patch recovery: Open scanned folder / Save / Copy при `target not in workspace` | работает |
+| LangGraph orchestration layer (`aegis/graph/`, 8 nodes, dispatch + engine knob) | работает |
 | Web chat = extension (SSE `/api/ext/chat/stream`, structured finding/scan) | работает |
 | Web finding/scan Ask/Explain/Fix + diff Copy/Download | работает |
 | Web Settings page + ru/en language switch (i18n, lang threaded в API) | работает |

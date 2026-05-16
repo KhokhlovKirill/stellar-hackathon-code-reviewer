@@ -1,6 +1,6 @@
 # Aegis Security Review — Agent Handoff
 
-_Last updated: 2026-05-16 (сессия 7)_
+_Last updated: 2026-05-16 (сессия 8)_
 
 ---
 
@@ -406,6 +406,42 @@ aegis.isAuthenticated = true
     Подключено к `applyAndVerify` (Fix) и chat-panel "Apply Patch" — обе точки
     интерактивны. `GitProvider.applyPatch(patch, { hintFiles, rootOverride? })`
     + новый `applyPatchInRoot(root, sanitized, opts)` для прицельного применения.
+
+### Сессия 8
+42. **LangGraph orchestration layer добавлен над текущим pipeline.** Не
+    замена — слой поверх. `backend/aegis/graph/`:
+    - `state.py` `ScanGraphState` (TypedDict, total=False)
+    - `builder.py` 8-node DAG: parse → fetch_pr → fetch_diff → filter →
+      deterministic → llm → review → finalize, с conditional edges для
+      коротких замыканий (error в любом узле → finalize; нет code-файлов
+      → review без LLM)
+    - `routers.py`, `runtime.py` (async `ainvoke` + thread_id),
+      `checkpoints.py` (PostgresSaver если установлен `langgraph-checkpoint-
+      postgres`, иначе MemorySaver)
+    - `agents/` тонкие узлы, каждый вызывает существующие хелперы из
+      `pipeline.simple_scan` (`_parse_github_url`, `_fetch_pr`, `_fetch_diff`,
+      `_filter_files`, `_run_llm`, `_generate_scan_review`) — одна логика,
+      два orchestrator'а
+    - `agents/_trace.py` декоратор `@traced("name")` → per-node
+      duration/status в `state.trace` + error capture
+    - `runner.py` `run_graph_scan(url, token, lang)` возвращает тот же
+      `SimpleScanResult` что и `run_simple_scan` — API-compatible drop-in
+43. **`aegis.pipeline.dispatch.run_scan`** — единая точка входа, выбирает
+    orchestrator по `Settings.use_langgraph` (env `AEGIS_USE_LANGGRAPH=1`)
+    или per-request `engine` knob (`auto | graph | direct`). Все три
+    точки сканирования (`/api/ext/scan/url`, `/api/ext/scan/pr`,
+    `/api/review`, `/review`) теперь идут через dispatch, поэтому смена
+    orchestrator'а — это один env-флаг.
+44. **Dep + Docker.** `pyproject` получил `langgraph>=0.2.0`,
+    `langchain-core>=0.3.0`. Docker `api` image пересобран и перезапущен,
+    end-to-end проверено: при `engine=graph` логи показывают
+    `dispatch.route orchestrator=langgraph` и per-node трассировку
+    (`graph.node.done node=parse status=error` …).
+45. **Тесты + типы.** `tests/test_graph.py` — 9 тестов (топология, error
+    short-circuit, форма результата, dispatcher routing, engine knob).
+    Все 83 теста pytest зелёные, ruff/mypy чистые.
+46. **Ветка `main`** создана из текущего HEAD и запушена в `origin/main`,
+    как было поручено перед интеграцией.
 
 ## Что нужно доделать (актуально)
 

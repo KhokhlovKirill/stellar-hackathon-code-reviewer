@@ -432,7 +432,7 @@ async def review_submit(
     user: User | None = _user_opt,
 ) -> HTMLResponse:
     from aegis.api.extension import _persist_scan_result
-    from aegis.pipeline.simple_scan import run_simple_scan
+    from aegis.pipeline.dispatch import run_scan
 
     url = repo_url.strip()
     if not url:
@@ -441,7 +441,7 @@ async def review_submit(
 
     log.info("web.simple_scan", url=url)
     from aegis.config import get_config
-    result = await run_simple_scan(
+    result = await run_scan(
         url,
         token=token.strip() or None,
         lang=get_config().policy.comment_language,

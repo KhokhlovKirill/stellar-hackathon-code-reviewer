@@ -452,9 +452,9 @@ class ReviewRequest(BaseModel):
 @router.post("/review")
 async def review_repo(req: ReviewRequest) -> dict[str, Any]:
     """Pull-mode security review of a public or token-authenticated GitHub PR."""
-    from aegis.pipeline.simple_scan import run_simple_scan
+    from aegis.pipeline.dispatch import run_scan
 
-    result = await run_simple_scan(
+    result = await run_scan(
         req.repo_url.strip(),
         token=req.token.strip() or None,
         lang=req.lang,
