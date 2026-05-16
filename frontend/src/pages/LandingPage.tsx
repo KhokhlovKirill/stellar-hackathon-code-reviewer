@@ -277,7 +277,7 @@ export function LandingPage() {
 
               <div className="flex flex-wrap gap-3">
                 <a
-                  href="/aegis-security-0.2.0.vsix"
+href="/aegis-security-0.2.0.vsix"
                   download
                   className="inline-flex items-center gap-2.5 px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-base transition-all shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
                 >
@@ -465,14 +465,14 @@ export function LandingPage() {
 
               <div className="mt-6">
                 <a
-                  href="/aegis-security-0.2.0.vsix"
+href="/aegis-security-0.2.0.vsix"
                   download
                   className="flex items-center justify-center gap-2.5 w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-sm transition-all shadow-lg shadow-violet-500/20"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
-                  Скачать .vsix (v0.2.0)
+Скачать .vsix (v0.2.0)
                 </a>
                 <p className="text-center text-xs text-slate-500 mt-2">
                   Расширения — Установить из VSIX — перезагрузить окно
@@ -546,7 +546,7 @@ export function LandingPage() {
           </p>
           <div className="flex flex-wrap justify-center gap-4">
             <a
-              href="/aegis-security-0.2.0.vsix"
+href="/aegis-security-0.2.0.vsix"
               download
               className="inline-flex items-center gap-2.5 px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-lg transition-all shadow-2xl shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
             >
