@@ -2,7 +2,7 @@
   "name": "aegis-security",
   "displayName": "Aegis Security Review",
   "description": "AI-powered security code review: findings, auto-fix, and agent chat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "aegis",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/Nikita56792/Don" },

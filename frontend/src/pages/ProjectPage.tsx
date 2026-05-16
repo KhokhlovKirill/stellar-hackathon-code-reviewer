@@ -6,11 +6,12 @@ import { ProviderLogo, providerLabel } from "../components/ProviderLogo";
 import { ProviderSelect } from "../components/ProviderSelect";
 import { PillSelect } from "../components/PillSelect";
 import { RequireAuth } from "../context/AuthContext";
+import { useSettings } from "../context/SettingsContext";
 import { api, ApiError } from "../lib/api";
 import { riskBadge, riskLabel, riskScoreColor } from "../lib/severity";
 import type { ProjectDetail, QuickConnectResult } from "../lib/types";
 
-const DEFAULT_PUBLIC_URL = "http://localhost:8099";
+const DEFAULT_PUBLIC_URL = "https://aegis.khokhlovkirill.ru";
 
 const SEVERITY_OPTIONS = [
   { value: "low",      label: "Низкий",      color: "slate"  as const },
@@ -51,11 +52,13 @@ export function ProjectPage() {
 function ProjectContent() {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const { lang } = useSettings();
   const id = Number(projectId);
   const [data, setData] = useState<ProjectDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"quick" | "manual">("quick");
   const [loading, setLoading] = useState(true);
+  const [scanning, setScanning] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!Number.isFinite(id)) return;
@@ -107,6 +110,32 @@ function ProjectContent() {
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? (err.detail ?? err.message) : "Ошибка подключения");
+    }
+  }
+
+  async function scanPR(repoId: number, prNumber: number) {
+    setError(null);
+    setScanning(`pr:${repoId}:${prNumber}`);
+    try {
+      const result = await api.scanConnectedPR(id, repoId, prNumber, lang);
+      navigate(`/scans/${result.scan_id}`);
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.detail ?? err.message) : "Ошибка сканирования PR");
+    } finally {
+      setScanning(null);
+    }
+  }
+
+  async function scanRepo(repoId: number) {
+    setError(null);
+    setScanning(`repo:${repoId}`);
+    try {
+      const result = await api.scanConnectedRepo(id, repoId, lang);
+      navigate(`/scans/${result.scan_id}`);
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.detail ?? err.message) : "Ошибка полного сканирования репозитория");
+    } finally {
+      setScanning(null);
     }
   }
 
@@ -174,6 +203,14 @@ function ProjectContent() {
                         {r.policy.severity_gate}
                       </span>
                       {statusBadge(r.status)}
+                      <button
+                        type="button"
+                        onClick={() => void scanRepo(r.id)}
+                        disabled={scanning === `repo:${r.id}`}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-indigo-200 dark:border-indigo-500/30 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 disabled:opacity-50"
+                      >
+                        {scanning === `repo:${r.id}` ? "Анализ..." : "Проверить весь проект"}
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -182,6 +219,52 @@ function ProjectContent() {
               <div className="px-6 py-10 text-center">
                 <p className="text-slate-400 dark:text-slate-600 text-sm">Репозиториев пока нет</p>
                 <p className="text-slate-300 dark:text-slate-700 text-xs mt-1">Подключите репозиторий справа →</p>
+              </div>
+            )}
+          </section>
+
+          {/* Pull requests */}
+          <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <h2 className="font-semibold text-slate-900 dark:text-white">Pull / Merge requests</h2>
+              <span className="text-xs text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full">{data.pull_requests.length}</span>
+            </div>
+            {data.pull_requests.length > 0 ? (
+              <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                {data.pull_requests.map((pr) => {
+                  const key = `${pr.repo_id}:${pr.pr_number}`;
+                  return (
+                    <div key={key} className="px-6 py-4 flex items-center gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <p className="text-sm font-medium text-slate-900 dark:text-white truncate">#{pr.pr_number} {pr.title}</p>
+                          <span className="text-[11px] uppercase tracking-wide text-slate-400">{pr.state}</span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5 truncate">
+                          {pr.repo_slug} · {pr.head_branch} → {pr.base_branch} · {new Date(pr.updated_at).toLocaleString("ru-RU")}
+                        </p>
+                      </div>
+                      {pr.last_scan && (
+                        <Link to={`/scans/${pr.last_scan.id}`} className={`text-xs font-medium px-2.5 py-1 rounded-full ${riskBadge(pr.last_scan.risk_label)}`}>
+                          {riskLabel(pr.last_scan.risk_label)}
+                        </Link>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void scanPR(pr.repo_id, pr.pr_number)}
+                        disabled={scanning === `pr:${key}`}
+                        className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-semibold hover:opacity-90 disabled:opacity-50"
+                      >
+                        {scanning === `pr:${key}` ? "Анализ..." : "Сканировать"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="px-6 py-10 text-center">
+                <p className="text-slate-400 dark:text-slate-600 text-sm">Pull / merge requests не найдены</p>
+                <p className="text-slate-300 dark:text-slate-700 text-xs mt-1">Показываются существующие PR/MR провайдера, включая созданные до подключения Aegis</p>
               </div>
             )}
           </section>
@@ -242,15 +325,15 @@ function ProjectContent() {
             {tab === "quick" ? (
               <form onSubmit={onQuickConnect} className="p-5 space-y-4">
                 <p className="text-xs text-slate-500 dark:text-slate-500 leading-relaxed">
-                  Вставьте URL репозитория GitHub — Aegis сам получит ID и зарегистрирует webhook.
+                  Вставьте URL репозитория GitHub или GitLab — Aegis сам получит ID и зарегистрирует webhook.
                 </p>
-                <FormField label="URL репозитория GitHub">
-                  <TextInput name="repo_url" required placeholder="https://github.com/owner/repo" />
+                <FormField label="URL репозитория">
+                  <TextInput name="repo_url" required placeholder="https://github.com/owner/repo или https://gitlab.example/group/repo" />
                 </FormField>
-                <FormField label="Токен доступа GitHub" hint="Права: repo + admin:repo_hook">
-                  <TextInput name="access_token" type="password" required placeholder="ghp_xxxxxxxxxxxx" />
+                <FormField label="Токен доступа" hint="GitHub: repo + admin:repo_hook; GitLab: api">
+                  <TextInput name="access_token" type="password" required placeholder="ghp_... или glpat-..." />
                 </FormField>
-                <FormField label="Публичный URL" hint={`Webhook: ${DEFAULT_PUBLIC_URL}/webhooks/github`}>
+                <FormField label="Публичный URL" hint={`Webhook: ${DEFAULT_PUBLIC_URL}/webhooks/{provider}`}>
                   <TextInput name="public_url" required defaultValue={DEFAULT_PUBLIC_URL} />
                 </FormField>
                 <FormField label="Порог серьёзности">

@@ -146,4 +146,29 @@ export const api = {
       },
     );
   },
+
+  scanConnectedPR(
+    projectId: number,
+    repoId: number,
+    prNumber: number,
+    lang: "ru" | "en" = "ru",
+  ) {
+    return apiFetch<ReviewResult>(
+      `/api/projects/${projectId}/repos/${repoId}/pulls/${prNumber}/scan`,
+      {
+        method: "POST",
+        body: JSON.stringify({ lang }),
+      },
+    );
+  },
+
+  scanConnectedRepo(projectId: number, repoId: number, lang: "ru" | "en" = "ru") {
+    return apiFetch<ReviewResult>(
+      `/api/projects/${projectId}/repos/${repoId}/scan`,
+      {
+        method: "POST",
+        body: JSON.stringify({ lang }),
+      },
+    );
+  },
 };

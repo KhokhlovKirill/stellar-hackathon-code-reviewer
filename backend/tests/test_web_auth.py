@@ -64,33 +64,33 @@ def test_register_request_validation() -> None:
 
 
 def test_login_and_register_pages_render() -> None:
-    c = TestClient(create_app())
-    assert c.get("/login").status_code == 200
-    assert "Sign in" in c.get("/login").text
-    assert c.get("/register").status_code == 200
-    assert "Create your account" in c.get("/register").text
+    with TestClient(create_app()) as c:
+        assert c.get("/login").status_code == 200
+        assert "Sign in" in c.get("/login").text
+        assert c.get("/register").status_code == 200
+        assert "Create your account" in c.get("/register").text
 
 
 def test_index_redirects_to_login_when_anonymous() -> None:
-    c = TestClient(create_app(), follow_redirects=False)
-    r = c.get("/")
-    assert r.status_code == 303
-    assert r.headers["location"] == "/login"
+    with TestClient(create_app(), follow_redirects=False) as c:
+        r = c.get("/")
+        assert r.status_code == 303
+        assert r.headers["location"] == "/login"
 
 
 def test_dashboard_requires_auth() -> None:
-    c = TestClient(create_app(), follow_redirects=False)
-    r = c.get("/dashboard")
-    assert r.status_code == 303
-    assert r.headers["location"] == "/login"
+    with TestClient(create_app(), follow_redirects=False) as c:
+        r = c.get("/dashboard")
+        assert r.status_code == 303
+        assert r.headers["location"] == "/login"
 
 
 def test_bad_session_cookie_is_ignored() -> None:
-    c = TestClient(create_app(), follow_redirects=False)
-    c.cookies.set("aegis_session", "garbage.token.value")
-    r = c.get("/dashboard")
-    assert r.status_code == 303
-    assert r.headers["location"] == "/login"
+    with TestClient(create_app(), follow_redirects=False) as c:
+        c.cookies.set("aegis_session", "garbage.token.value")
+        r = c.get("/dashboard")
+        assert r.status_code == 303
+        assert r.headers["location"] == "/login"
 
 
 # ---------------------------------------------------------------------------- #
@@ -198,25 +198,26 @@ def test_register_login_create_project_flow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, db = _client_with_fake_db()
-    routes, sec, fake_session = client._fake  # type: ignore[attr-defined]
-    monkeypatch.setattr(routes, "get_session", fake_session)
-    monkeypatch.setattr(sec, "get_session", fake_session)
+    with client:
+        routes, sec, fake_session = client._fake  # type: ignore[attr-defined]
+        monkeypatch.setattr(routes, "get_session", fake_session)
+        monkeypatch.setattr(sec, "get_session", fake_session)
 
-    # Register
-    r = client.post("/register", data={
-        "email": "dev@acme.io", "password": "supersecret", "display_name": "Dev",
-    })
-    assert r.status_code == 303
-    assert r.headers["location"] == "/dashboard"
-    assert "aegis_session" in r.cookies
-    assert len(db.users) == 1
-    assert db.users[0].email == "dev@acme.io"
-    assert verify_password("supersecret", db.users[0].password_hash)
+        # Register
+        r = client.post("/register", data={
+            "email": "dev@acme.io", "password": "supersecret", "display_name": "Dev",
+        })
+        assert r.status_code == 303
+        assert r.headers["location"] == "/dashboard"
+        assert "aegis_session" in r.cookies
+        assert len(db.users) == 1
+        assert db.users[0].email == "dev@acme.io"
+        assert verify_password("supersecret", db.users[0].password_hash)
 
-    # Authenticated dashboard
-    r = client.get("/dashboard")
-    assert r.status_code == 200
-    assert "Your projects" in r.text
+        # Authenticated dashboard
+        r = client.get("/dashboard")
+        assert r.status_code == 200
+        assert "Your projects" in r.text
 
     # Create a project
     r = client.post("/projects", data={"name": "Payments API",

@@ -138,7 +138,11 @@ class LLMRouter:
         if model_id is None:
             return None
         from aegis.llm.lmstudio_manager import ensure_model
-        return await ensure_model(self.settings.lmstudio_base_url, model_id)
+        return await ensure_model(
+            self.settings.lmstudio_base_url,
+            model_id,
+            unload_others=self._swap_enabled(),
+        )
 
     async def complete(
         self,

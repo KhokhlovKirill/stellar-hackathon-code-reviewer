@@ -126,3 +126,30 @@ def test_gitlab_base_url_default_and_selfhosted() -> None:
         },
     )
     assert p.base_url == "https://git.khokhlovkirill.ru/api/v4"
+
+
+# ── Repo URL parsing: GitHub + self-hosted GitLab ─────────────────────────────
+def test_parse_repo_url_github_and_gitlab() -> None:
+    from aegis.pipeline.simple_scan import _parse_repo_url
+
+    assert _parse_repo_url("https://github.com/octocat/Hello-World/pull/42") == (
+        "github", "https://api.github.com", "octocat/Hello-World", 42,
+    )
+    assert _parse_repo_url("https://github.com/octocat/Hello-World") == (
+        "github", "https://api.github.com", "octocat/Hello-World", None,
+    )
+    assert _parse_repo_url("octocat/Hello-World") == (
+        "github", "https://api.github.com", "octocat/Hello-World", None,
+    )
+    # Self-hosted GitLab repo URL (the previously-failing case).
+    assert _parse_repo_url("https://git.khokhlovkirill.com/hackathon4/fake_rep1") == (
+        "gitlab", "https://git.khokhlovkirill.com/api/v4", "hackathon4/fake_rep1", None,
+    )
+    # Self-hosted GitLab MR URL with subgroup.
+    assert _parse_repo_url(
+        "https://git.khokhlovkirill.ru/grp/sub/repo/-/merge_requests/7"
+    ) == ("gitlab", "https://git.khokhlovkirill.ru/api/v4", "grp/sub/repo", 7)
+    # gitlab.com
+    assert _parse_repo_url("https://gitlab.com/owner/proj/-/merge_requests/1") == (
+        "gitlab", "https://gitlab.com/api/v4", "owner/proj", 1,
+    )

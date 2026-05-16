@@ -299,6 +299,41 @@ export function registerAllCommands(deps: CommandDeps): vscode.Disposable[] {
         },
         async (progress) => {
           try {
+            const branch = (await git.getCurrentBranch()) ?? "HEAD";
+            const remote = await git.getRepoRemoteInfo();
+            if (remote && branch !== "HEAD") {
+              try {
+                const repos = await client.getRepos();
+                const connected = repos.find((r) =>
+                  r.provider === remote.provider && r.slug.toLowerCase() === remote.slug.toLowerCase()
+                );
+                if (connected) {
+                  const prs = await client.getRepoPRs(connected.id);
+                  const currentPr = prs.find((pr) => pr.head_branch === branch);
+                  if (currentPr) {
+                    progress.report({ message: `Found connected PR/MR #${currentPr.pr_number}; scanning provider diff...` });
+                    const result = await client.scanPR(connected.id, currentPr.pr_number);
+                    currentScan.value = result;
+
+                    diagnostics.loadFindingsForScan(result, getSeverityGate());
+                    codeLens.refresh();
+                    findingsTree.loadScanResult(result, getSeverityGate());
+                    prTree.loadData().catch(() => {});
+
+                    const panel = panelManager.getOrCreatePRDetailPanel(
+                      result,
+                      (msg) => handlePRDetailMessage(msg, deps, result)
+                    );
+                    panel.title = `Aegis: PR #${currentPr.pr_number}`;
+                    setStatus(statusBar, `PR scan: ${result.findings.length} findings`);
+                    return;
+                  }
+                }
+              } catch {
+                // Not signed in or repo not connected; fall back to local diff.
+              }
+            }
+
             progress.report({ message: "Getting diff vs main..." });
             const diff = await git.getDiffVsMain();
             if (!diff.trim()) {
@@ -310,7 +345,6 @@ export function registerAllCommands(deps: CommandDeps): vscode.Disposable[] {
             }
 
             const repoSlug = (await git.getRepoSlug()) ?? "local";
-            const branch = (await git.getCurrentBranch()) ?? "HEAD";
 
             progress.report({ message: "Running security analysis..." });
             const result = await client.scanBranch(diff, repoSlug, branch);

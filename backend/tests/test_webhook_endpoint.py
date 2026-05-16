@@ -65,16 +65,17 @@ def test_github_webhook_queues_scan(monkeypatch) -> None:  # type: ignore[no-unt
     monkeypatch.setattr(webhooks, "enqueue_scan", _enqueue)
 
     body = json.dumps(_github_payload()).encode()
-    r = TestClient(create_app()).post(
-        "/webhooks/github",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-GitHub-Event": "pull_request",
-            "X-GitHub-Delivery": "delivery-1",
-            "X-Hub-Signature-256": _signature(body),
-        },
-    )
+    with TestClient(create_app()) as client:
+        r = client.post(
+            "/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": "delivery-1",
+                "X-Hub-Signature-256": _signature(body),
+            },
+        )
 
     assert r.status_code == 202
     assert r.json()["status"] == "queued"
@@ -88,16 +89,17 @@ def test_github_webhook_rejects_bad_signature(monkeypatch) -> None:  # type: ign
     monkeypatch.setattr(webhooks, "webhook_secret", _secret)
     monkeypatch.setattr(webhooks, "claim", _claim_true)
     body = json.dumps(_github_payload()).encode()
-    r = TestClient(create_app()).post(
-        "/webhooks/github",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-GitHub-Event": "pull_request",
-            "X-GitHub-Delivery": "delivery-2",
-            "X-Hub-Signature-256": "sha256=bad",
-        },
-    )
+    with TestClient(create_app()) as client:
+        r = client.post(
+            "/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": "delivery-2",
+                "X-Hub-Signature-256": "sha256=bad",
+            },
+        )
 
     assert r.status_code == 401
     assert "signature" in r.json()["error"]
@@ -109,27 +111,29 @@ def test_github_webhook_duplicate_short_circuits(monkeypatch) -> None:  # type: 
     monkeypatch.setattr(webhooks, "webhook_secret", _secret)
     monkeypatch.setattr(webhooks, "claim", _claim_false)
     body = json.dumps(_github_payload()).encode()
-    r = TestClient(create_app()).post(
-        "/webhooks/github",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-GitHub-Event": "pull_request",
-            "X-GitHub-Delivery": "delivery-3",
-            "X-Hub-Signature-256": _signature(body),
-        },
-    )
+    with TestClient(create_app()) as client:
+        r = client.post(
+            "/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": "delivery-3",
+                "X-Hub-Signature-256": _signature(body),
+            },
+        )
 
     assert r.status_code == 202
     assert r.json() == {"status": "duplicate"}
 
 
 def test_webhook_rejects_non_json_content_type() -> None:
-    r = TestClient(create_app()).post(
-        "/webhooks/github",
-        content=b"{}",
-        headers={"Content-Type": "text/plain"},
-    )
+    with TestClient(create_app()) as client:
+        r = client.post(
+            "/webhooks/github",
+            content=b"{}",
+            headers={"Content-Type": "text/plain"},
+        )
     assert r.status_code == 415
 
 

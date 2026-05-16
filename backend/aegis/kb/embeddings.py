@@ -29,6 +29,12 @@ async def embed(finding_title: str, snippet: str, cwe: str | None) -> list[float
         return None
     url = settings.lmstudio_base_url.rstrip("/") + "/embeddings"
     try:
+        try:
+            from aegis.llm.lmstudio_manager import load_model_no_unload
+
+            await load_model_no_unload(settings.lmstudio_base_url, settings.lmstudio_embed_model)
+        except Exception as exc:
+            log.warning("kb.embed_model_load_failed", error=str(exc))
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(
                 url,

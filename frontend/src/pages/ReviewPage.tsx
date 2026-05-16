@@ -82,7 +82,7 @@ export function ReviewPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-10 space-y-8">
+    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-10 space-y-8">
       {/* Hero */}
       <div className="text-center">
         <div className="inline-flex items-center gap-2 bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 rounded-full px-4 py-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-300 mb-5">

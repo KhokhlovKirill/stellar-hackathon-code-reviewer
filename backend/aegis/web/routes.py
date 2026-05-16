@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -21,6 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from aegis.api.auth import issue_token
+from aegis.api.email_validation import is_plausible_email, normalize_email
 from aegis.api.security import (
     SESSION_COOKIE,
     current_user_web,
@@ -60,9 +60,6 @@ templates = Jinja2Templates(directory=str(_templates_dir()))
 _user_web = Depends(require_user_web)
 _user_opt = Depends(current_user_web)
 
-_EMAIL_OK = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
 def _set_session(resp: RedirectResponse, email: str) -> RedirectResponse:
     resp.set_cookie(
         key=SESSION_COOKIE,
@@ -100,8 +97,8 @@ async def register_submit(
     password: str = Form(...),
     display_name: str = Form(""),
 ) -> Any:
-    email = email.strip().lower()
-    if not _EMAIL_OK.match(email):
+    email = normalize_email(email)
+    if not is_plausible_email(email):
         return _page(request, "register.html", error="Enter a valid email address.")
     if len(password) < 8:
         return _page(request, "register.html",
@@ -133,7 +130,7 @@ async def login_submit(
     email: str = Form(...),
     password: str = Form(...),
 ) -> Any:
-    email = email.strip().lower()
+    email = normalize_email(email)
     async with get_session() as s:
         user = (
             await s.execute(select(User).where(User.email == email))

@@ -37,6 +37,20 @@ const BENEFITS = [
   { icon: "🌐", label: "GitHub, GitLab и Bitbucket из коробки" },
 ];
 
+function isPlausibleEmail(value: string) {
+  const email = value.trim().toLowerCase();
+  if (email.length < 3 || email.length > 254 || email.split("@").length !== 2) return false;
+  const [local, domain] = email.split("@");
+  if (!local || !domain || local.length > 64) return false;
+  if (local.startsWith(".") || local.endsWith(".") || local.includes("..")) return false;
+  if (!/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(local)) return false;
+  if (domain.includes("..") || domain.startsWith("[") || domain.endsWith("]")) return false;
+  const labels = domain.split(".");
+  if (labels.length < 2) return false;
+  if (!labels.every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label))) return false;
+  return /^[A-Za-z]{2,}$/.test(labels[labels.length - 1]);
+}
+
 export function RegisterPage() {
   const { register } = useAuth();
   const [error, setError] = useState<string | null>(null);
@@ -49,10 +63,11 @@ export function RegisterPage() {
     const fd = new FormData(e.currentTarget);
     const pass    = String(fd.get("password") ?? "");
     const confirm = String(fd.get("confirm") ?? "");
+    const email = String(fd.get("email") ?? "").trim().toLowerCase();
+    if (!isPlausibleEmail(email)) { setError("Введите действительный email: имя@домен.tld, без недопустимых точек и символов"); setPending(false); return; }
     if (pass !== confirm) { setError("Пароли не совпадают"); setPending(false); return; }
     if (pass.length < 8)  { setError("Пароль должен быть не менее 8 символов"); setPending(false); return; }
     try {
-      const email = String(fd.get("email") ?? "");
       await register(email, pass, email);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -67,23 +82,23 @@ export function RegisterPage() {
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
-      {/* Left brand panel – always dark */}
-      <div className="relative hidden md:flex md:w-[45%] lg:w-1/2 flex-col justify-center items-center p-12 overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-violet-950/80 via-slate-950 to-indigo-950/70" />
-        <div className="absolute inset-0 opacity-[0.025]"
-          style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "40px 40px" }} />
+      {/* Left brand panel */}
+      <div className="relative hidden md:flex md:w-[45%] lg:w-1/2 flex-col justify-center items-center p-12 overflow-hidden bg-violet-50 dark:bg-transparent">
+        <div className="absolute inset-0 bg-gradient-to-br from-violet-100/80 via-slate-100/60 to-indigo-100/50 dark:from-violet-950/80 dark:via-slate-950 dark:to-indigo-950/70" />
+        <div className="absolute inset-0 opacity-[0.04] dark:opacity-[0.025]"
+          style={{ backgroundImage: "radial-gradient(circle at 1px 1px, rgb(124,58,237) 1px, transparent 0)", backgroundSize: "40px 40px" }} />
         <div className="relative z-10 max-w-sm w-full text-center">
           <div className="flex items-center justify-center gap-3 mb-3">
             <AegisLogo size={52} />
-            <span className="text-5xl font-black tracking-tighter bg-gradient-to-r from-indigo-300 to-violet-300 bg-clip-text text-transparent">AEGIS</span>
+            <span className="text-5xl font-black tracking-tighter bg-gradient-to-r from-indigo-600 to-violet-600 dark:from-indigo-300 dark:to-violet-300 bg-clip-text text-transparent">AEGIS</span>
           </div>
-          <p className="text-slate-400 text-base mb-10 font-medium">Начните защищать код уже сегодня</p>
+          <p className="text-slate-500 dark:text-slate-400 text-base mb-10 font-medium">Начните защищать код уже сегодня</p>
           <SecurityIllustration />
           <div className="mt-10 space-y-3 text-left">
             {BENEFITS.map((b) => (
-              <div key={b.icon} className="flex items-center gap-3 bg-slate-800/30 border border-slate-700/30 rounded-xl px-4 py-3">
+              <div key={b.icon} className="flex items-center gap-3 bg-white/60 dark:bg-slate-800/30 border border-violet-200/60 dark:border-slate-700/30 rounded-xl px-4 py-3">
                 <span className="text-xl">{b.icon}</span>
-                <span className="text-sm text-slate-300">{b.label}</span>
+                <span className="text-sm text-slate-600 dark:text-slate-300">{b.label}</span>
               </div>
             ))}
           </div>

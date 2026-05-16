@@ -6,6 +6,7 @@ import hmac
 import re
 import secrets
 from typing import Any, cast
+from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
 from aegis.api.auth import issue_token, require_admin
+from aegis.api.email_validation import is_plausible_email, normalize_email
 from aegis.api.security import hash_password, require_user, verify_password
 from aegis.config import get_settings
 from aegis.db import get_session
@@ -39,9 +41,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
 class RegisterRequest(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=8, max_length=200)
@@ -50,8 +49,8 @@ class RegisterRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def _valid_email(cls, v: str) -> str:
-        v = v.strip().lower()
-        if not _EMAIL_RE.match(v):
+        v = normalize_email(v)
+        if not is_plausible_email(v):
             raise ValueError("invalid email address")
         return v
 
@@ -94,6 +93,23 @@ class RepoOut(BaseModel):
     slug: str
     status: str
     policy: dict[str, Any]
+
+
+class ConnectedPROut(BaseModel):
+    repo_id: int
+    repo_slug: str
+    provider: str
+    pr_number: int
+    title: str
+    author: str
+    url: str
+    head_branch: str
+    base_branch: str
+    state: str
+    created_at: str
+    updated_at: str
+    draft: bool = False
+    last_scan: dict[str, Any] | None = None
 
 
 class ChatTurn(BaseModel):
@@ -233,6 +249,7 @@ async def project_detail(
             ).scalars().all()
             if slugs else []
         )
+        pull_requests = await _project_pull_requests(session, list(repos))
         return {
             "project": {
                 "id": project.id,
@@ -252,6 +269,7 @@ async def project_detail(
                 }
                 for s in scans
             ],
+            "pull_requests": [pr.model_dump() for pr in pull_requests],
         }
 
 
@@ -451,8 +469,9 @@ class ReviewRequest(BaseModel):
 
 @router.post("/review")
 async def review_repo(req: ReviewRequest) -> dict[str, Any]:
-    """Pull-mode security review of a public or token-authenticated GitHub PR."""
+    """Pull-mode security review of a public or token-authenticated PR/MR."""
     from aegis.pipeline.dispatch import run_scan
+    from aegis.pipeline.simple_scan import _parse_repo_url
 
     result = await run_scan(
         req.repo_url.strip(),
@@ -461,8 +480,24 @@ async def review_repo(req: ReviewRequest) -> dict[str, Any]:
     )
     if result.error:
         raise HTTPException(status_code=422, detail=result.error)
+    scan_id = result.scan_id or secrets.token_hex(16)
+    provider = _parse_repo_url(req.repo_url.strip())[0]
+    from aegis.api.extension import _persist_scan_result
+
+    await _persist_scan_result(
+        scan_id=scan_id,
+        provider=provider,
+        repo_slug=result.repo,
+        pr_id=str(result.pr_number),
+        head_sha=result.head_sha,
+        files_scanned=result.files_scanned_paths,
+        degraded=result.degraded_reasons,
+        findings=result.findings,
+        summary=result.summary,
+        finding_labels=result.finding_labels,
+    )
     return {
-        "scan_id": result.scan_id,
+        "scan_id": scan_id,
         "repo": result.repo,
         "pr_number": result.pr_number,
         "pr_title": result.pr_title,
@@ -606,6 +641,7 @@ class QuickConnectOut(BaseModel):
     webhook_secret: str
     webhook_url: str
     github_hook_id: int | None
+    provider: str = "github"
 
 
 async def _github_repo_info(slug: str, token: str) -> dict[str, Any]:
@@ -664,6 +700,74 @@ def _parse_github_slug(url: str) -> str:
     return m.group(1).removesuffix(".git")
 
 
+def _gitlab_root() -> str:
+    return get_settings().gitlab_base_url.rstrip("/")
+
+
+def _gitlab_api_base() -> str:
+    return f"{_gitlab_root()}/api/v4"
+
+
+def _gitlab_headers(token: str) -> dict[str, str]:
+    return {"PRIVATE-TOKEN": token}
+
+
+def _parse_repo_kind_and_slug(url: str) -> tuple[str, str]:
+    value = url.strip().rstrip("/")
+    gh = re.search(r"github\.com/([^/]+/[^/]+)", value)
+    if gh:
+        return Provider.GITHUB.value, gh.group(1).removesuffix(".git")
+    parsed = urlparse(value if value.startswith(("http://", "https://")) else f"https://{value}")
+    if parsed.netloc and "github.com" not in parsed.netloc and parsed.path.strip("/"):
+        project = re.split(r"/-/", parsed.path.strip("/"))[0].removesuffix(".git")
+        if "/" in project:
+            return Provider.GITLAB.value, project
+    if "/" in value and not value.startswith("http"):
+        return Provider.GITHUB.value, value.removesuffix(".git")
+    raise HTTPException(status_code=422, detail="Cannot parse repository URL")
+
+
+async def _gitlab_repo_info(slug: str, token: str) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(
+            f"{_gitlab_api_base()}/projects/{quote(slug, safe='')}",
+            headers=_gitlab_headers(token),
+        )
+    if r.status_code == 404:
+        raise HTTPException(
+            status_code=404,
+            detail="GitLab repo not found — check URL or token scope",
+        )
+    if r.status_code == 401:
+        raise HTTPException(status_code=401, detail="GitLab token invalid or expired")
+    if r.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitLab API error {r.status_code}: {r.text[:160]}",
+        )
+    return r.json()  # type: ignore[no-any-return]
+
+
+async def _register_gitlab_webhook(
+    slug: str, token: str, webhook_url: str, secret: str
+) -> int | None:
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(
+            f"{_gitlab_api_base()}/projects/{quote(slug, safe='')}/hooks",
+            headers=_gitlab_headers(token),
+            json={
+                "url": webhook_url,
+                "token": secret,
+                "merge_requests_events": True,
+                "note_events": True,
+                "enable_ssl_verification": True,
+            },
+        )
+    if r.status_code in (200, 201):
+        return int(r.json().get("id", 0)) or None
+    return None
+
+
 @router.post(
     "/projects/{project_id}/repos/quick-connect",
     response_model=QuickConnectOut,
@@ -673,30 +777,37 @@ async def quick_connect_repo(
     project_id: int, req: QuickConnectRequest, user: User = _user_dep
 ) -> QuickConnectOut:
     """One-step repo connect: URL + PAT → fetch info + register webhook + save."""
-    slug = _parse_github_slug(req.repo_url)
-    info = await _github_repo_info(slug, req.access_token)
-    external_id = str(info["id"])
-    canonical_slug = info["full_name"]
-
+    provider, slug = _parse_repo_kind_and_slug(req.repo_url)
     webhook_secret_val = secrets.token_hex(24)
-    webhook_url = f"{req.public_url.rstrip('/')}/webhooks/github"
-
-    hook_id = await _register_github_webhook(
-        canonical_slug, req.access_token, webhook_url, webhook_secret_val
-    )
+    if provider == Provider.GITLAB.value:
+        info = await _gitlab_repo_info(slug, req.access_token)
+        external_id = str(info["id"])
+        canonical_slug = str(info.get("path_with_namespace") or slug)
+        webhook_url = f"{req.public_url.rstrip('/')}/webhooks/gitlab"
+        hook_id = await _register_gitlab_webhook(
+            canonical_slug, req.access_token, webhook_url, webhook_secret_val
+        )
+    else:
+        info = await _github_repo_info(slug, req.access_token)
+        external_id = str(info["id"])
+        canonical_slug = info["full_name"]
+        webhook_url = f"{req.public_url.rstrip('/')}/webhooks/github"
+        hook_id = await _register_github_webhook(
+            canonical_slug, req.access_token, webhook_url, webhook_secret_val
+        )
 
     async with get_session() as session:
         await _owned_project(session, project_id, user.id)
         existing = (
             await session.execute(
                 select(Repository).where(
-                    Repository.provider == Provider.GITHUB.value,
+                    Repository.provider == provider,
                     Repository.external_id == external_id,
                 )
             )
         ).scalar_one_or_none()
         repo = existing or Repository(
-            provider=Provider.GITHUB.value,
+            provider=provider,
             external_id=external_id,
             slug=canonical_slug,
             status="active",
@@ -726,7 +837,198 @@ async def quick_connect_repo(
             webhook_secret=webhook_secret_val,
             webhook_url=webhook_url,
             github_hook_id=hook_id,
+            provider=provider,
         )
+
+
+async def _repo_token(repo: Repository) -> str | None:
+    async with get_session() as session:
+        secret = (
+            await session.execute(
+                select(RepoSecret).where(
+                    RepoSecret.repo_id == repo.id,
+                    RepoSecret.kind == "access_token",
+                )
+            )
+        ).scalar_one_or_none()
+    if secret is None:
+        return None
+    from aegis.vault import decrypt
+
+    try:
+        return decrypt(secret.ciphertext)
+    except Exception:
+        return None
+
+
+def _scan_summary(s: Scan) -> dict[str, Any]:
+    return {
+        "id": s.id,
+        "pr_id": s.pr_id,
+        "status": s.status,
+        "risk_score": s.risk_score,
+        "risk_label": s.risk_label,
+        "started_at": s.started_at.isoformat(),
+        "finished_at": s.finished_at.isoformat() if s.finished_at else None,
+        "files_scanned": len(s.files_scanned) if isinstance(s.files_scanned, list) else 0,
+        "degraded": bool(s.degraded),
+    }
+
+
+async def _list_repo_prs(repo: Repository, token: str | None) -> list[ConnectedPROut]:
+    try:
+        if repo.provider == Provider.GITLAB.value:
+            async with httpx.AsyncClient(timeout=20) as client:
+                r = await client.get(
+                    f"{_gitlab_api_base()}/projects/{quote(repo.slug, safe='')}/merge_requests",
+                    params={
+                        "state": "all",
+                        "order_by": "updated_at",
+                        "sort": "desc",
+                        "per_page": 50,
+                    },
+                    headers=_gitlab_headers(token) if token else {},
+                )
+            if r.status_code != 200:
+                return []
+            rows = r.json() if isinstance(r.json(), list) else []
+            return [
+                ConnectedPROut(
+                    repo_id=repo.id,
+                    repo_slug=repo.slug,
+                    provider=repo.provider,
+                    pr_number=int(mr.get("iid") or 0),
+                    title=str(mr.get("title") or ""),
+                    author=str((mr.get("author") or {}).get("username") or ""),
+                    url=str(mr.get("web_url") or ""),
+                    head_branch=str(mr.get("source_branch") or ""),
+                    base_branch=str(mr.get("target_branch") or ""),
+                    state=str(mr.get("state") or ""),
+                    created_at=str(mr.get("created_at") or ""),
+                    updated_at=str(mr.get("updated_at") or ""),
+                    draft=bool(mr.get("draft") or mr.get("work_in_progress")),
+                )
+                for mr in rows
+            ]
+
+        headers = {"Accept": "application/vnd.github+json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.get(
+                f"https://api.github.com/repos/{repo.slug}/pulls",
+                params={"state": "all", "per_page": 50, "sort": "updated", "direction": "desc"},
+                headers=headers,
+            )
+        if r.status_code != 200:
+            return []
+        rows = r.json() if isinstance(r.json(), list) else []
+        return [
+            ConnectedPROut(
+                repo_id=repo.id,
+                repo_slug=repo.slug,
+                provider=repo.provider,
+                pr_number=int(pr.get("number") or 0),
+                title=str(pr.get("title") or ""),
+                author=str((pr.get("user") or {}).get("login") or ""),
+                url=str(pr.get("html_url") or ""),
+                head_branch=str((pr.get("head") or {}).get("ref") or ""),
+                base_branch=str((pr.get("base") or {}).get("ref") or ""),
+                state=str(pr.get("state") or ""),
+                created_at=str(pr.get("created_at") or ""),
+                updated_at=str(pr.get("updated_at") or ""),
+                draft=bool(pr.get("draft", False)),
+            )
+            for pr in rows
+        ]
+    except Exception:
+        return []
+
+
+async def _project_pull_requests(
+    session: Any,
+    repos: list[Repository],
+) -> list[ConnectedPROut]:
+    prs: list[ConnectedPROut] = []
+    for repo in repos:
+        prs.extend(await _list_repo_prs(repo, await _repo_token(repo)))
+    if not prs:
+        return prs
+    scans = (
+        await session.execute(
+            select(Scan)
+            .where(
+                Scan.repo_slug.in_([r.slug for r in repos]),
+                Scan.pr_id.in_([str(pr.pr_number) for pr in prs]),
+            )
+            .order_by(Scan.started_at.desc())
+        )
+    ).scalars().all()
+    latest: dict[tuple[str, str], Scan] = {}
+    for scan in scans:
+        latest.setdefault((scan.repo_slug, scan.pr_id), scan)
+    for pr in prs:
+        scan = latest.get((pr.repo_slug, str(pr.pr_number)))
+        if scan:
+            pr.last_scan = _scan_summary(scan)
+    return prs
+
+
+class ScanConnectedRequest(BaseModel):
+    lang: str = "ru"
+
+
+@router.post("/projects/{project_id}/repos/{repo_id}/pulls/{pr_number}/scan")
+async def scan_connected_pr(
+    project_id: int,
+    repo_id: int,
+    pr_number: int,
+    req: ScanConnectedRequest,
+    user: User = _user_dep,
+) -> dict[str, Any]:
+    async with get_session() as session:
+        await _owned_project(session, project_id, user.id)
+        repo = (
+            await session.execute(
+                select(Repository).where(
+                    Repository.id == repo_id,
+                    Repository.project_id == project_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if repo is None:
+            raise HTTPException(status_code=404, detail="repo not found")
+    from aegis.api.extension import _scan_registered_pr_response
+
+    return (
+        await _scan_registered_pr_response(repo, pr_number, await _repo_token(repo), req.lang)
+    ).model_dump()
+
+
+@router.post("/projects/{project_id}/repos/{repo_id}/scan")
+async def scan_connected_repo(
+    project_id: int,
+    repo_id: int,
+    req: ScanConnectedRequest,
+    user: User = _user_dep,
+) -> dict[str, Any]:
+    async with get_session() as session:
+        await _owned_project(session, project_id, user.id)
+        repo = (
+            await session.execute(
+                select(Repository).where(
+                    Repository.id == repo_id,
+                    Repository.project_id == project_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if repo is None:
+            raise HTTPException(status_code=404, detail="repo not found")
+    from aegis.api.extension import _scan_registered_repo_response
+
+    return (
+        await _scan_registered_repo_response(repo, await _repo_token(repo), req.lang)
+    ).model_dump()
 
 
 async def _policy_for(session: Any, repo_id: int) -> RepoPolicy | None:

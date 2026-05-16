@@ -25,6 +25,8 @@ class ScanGraphState(TypedDict, total=False):
     lang: str
 
     # ── Parsed identifiers ──────────────────────────────────────────────────
+    provider_kind: str       # github | gitlab
+    api_base: str            # REST API root for the provider
     slug: str
     pr_number: int
     pr_title: str

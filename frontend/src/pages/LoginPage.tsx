@@ -64,23 +64,23 @@ export function LoginPage() {
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
-      {/* Left brand panel – always dark */}
-      <div className="relative hidden md:flex md:w-[45%] lg:w-1/2 flex-col justify-center items-center p-12 overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-indigo-950/90 via-slate-950 to-violet-950/60" />
-        <div className="absolute inset-0 opacity-[0.025]"
-          style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "40px 40px" }} />
+      {/* Left brand panel */}
+      <div className="relative hidden md:flex md:w-[45%] lg:w-1/2 flex-col justify-center items-center p-12 overflow-hidden bg-indigo-50 dark:bg-transparent">
+        <div className="absolute inset-0 bg-gradient-to-br from-indigo-100/80 via-slate-100/60 to-violet-100/50 dark:from-indigo-950/90 dark:via-slate-950 dark:to-violet-950/60" />
+        <div className="absolute inset-0 opacity-[0.04] dark:opacity-[0.025]"
+          style={{ backgroundImage: "radial-gradient(circle at 1px 1px, rgb(99,102,241) 1px, transparent 0)", backgroundSize: "40px 40px" }} />
         <div className="relative z-10 max-w-sm w-full text-center">
           <div className="flex items-center justify-center gap-3 mb-3">
             <AegisLogo size={52} />
-            <span className="text-5xl font-black tracking-tighter bg-gradient-to-r from-indigo-300 to-violet-300 bg-clip-text text-transparent">AEGIS</span>
+            <span className="text-5xl font-black tracking-tighter bg-gradient-to-r from-indigo-600 to-violet-600 dark:from-indigo-300 dark:to-violet-300 bg-clip-text text-transparent">AEGIS</span>
           </div>
-          <p className="text-slate-400 text-base mb-10 font-medium">AI-система анализа безопасности кода</p>
+          <p className="text-slate-500 dark:text-slate-400 text-base mb-10 font-medium">AI-система анализа безопасности кода</p>
           <ShieldDecoration />
           <div className="mt-10 space-y-3 text-left">
             {FEATURES.map((f) => (
-              <div key={f.icon} className="flex items-center gap-3 bg-slate-800/30 border border-slate-700/30 rounded-xl px-4 py-3">
+              <div key={f.icon} className="flex items-center gap-3 bg-white/60 dark:bg-slate-800/30 border border-indigo-200/60 dark:border-slate-700/30 rounded-xl px-4 py-3">
                 <span className="text-xl">{f.icon}</span>
-                <span className="text-sm text-slate-300">{f.label}</span>
+                <span className="text-sm text-slate-600 dark:text-slate-300">{f.label}</span>
               </div>
             ))}
           </div>

@@ -11,6 +11,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,7 +37,7 @@ from aegis.obs import get_logger
 from aegis.pipeline.dispatch import run_scan
 from aegis.pipeline.risk_score import risk_breakdown, risk_label
 from aegis.pipeline.simple_scan import run_simple_scan  # noqa: F401 (re-exported for tests)
-from aegis.schemas import Finding, Severity
+from aegis.schemas import DiffLine, FileChange, Finding, Hunk, LineKind, Severity
 from aegis.vault import decrypt
 
 router = APIRouter(prefix="/api/ext", tags=["extension"])
@@ -252,6 +253,28 @@ def _gh_headers(token: str | None) -> dict[str, str]:
     return h
 
 
+def _gl_api_base() -> str:
+    from aegis.config import get_settings
+
+    return f"{get_settings().gitlab_base_url.rstrip('/')}/api/v4"
+
+
+def _gl_web_base() -> str:
+    from aegis.config import get_settings
+
+    return get_settings().gitlab_base_url.rstrip("/")
+
+
+def _gl_headers(token: str | None) -> dict[str, str]:
+    return {"PRIVATE-TOKEN": token} if token else {}
+
+
+def _repo_pr_url(repo: Repository, pr_number: int) -> str:
+    if repo.provider == "gitlab":
+        return f"{_gl_web_base()}/{repo.slug}/-/merge_requests/{pr_number}"
+    return f"https://github.com/{repo.slug}/pull/{pr_number}"
+
+
 async def _get_repo_access_token(repo: Repository) -> str | None:
     """Fetch and decrypt the stored access_token for a repo."""
     async with get_session() as session:
@@ -342,57 +365,25 @@ async def _persist_scan_result(
             )
 
 
-# ---------------------------------------------------------------------------
-# POST /api/ext/scan/url
-# ---------------------------------------------------------------------------
-
-
-@router.post("/scan/url", response_model=ScanUrlResponse)
-async def scan_url(req: ScanUrlRequest) -> ScanUrlResponse:
-    """Scan a GitHub PR URL. No auth required."""
-    result = await run_scan(
-        req.url,
-        req.token or None,
-        lang=req.lang,
-        prefer_graph=_engine_to_pref(req.engine),
-    )
-    if result.error:
-        raise HTTPException(status_code=422, detail=result.error)
-    scan_id = uuid.uuid4().hex
-
-    findings_out: list[FindingOut] = []
-    for f in result.findings:
-        findings_out.append(
-            FindingOut(
-                fingerprint=f.fingerprint(),
-                file=f.file,
-                line=f.line,
-                cwe=f.cwe,
-                severity=f.severity.value,
-                title=f.title,
-                rationale=f.rationale,
-                exploit=f.exploit,
-                fix=f.fix,
-                rule_id=f.rule_id,
-                confidence=f.confidence,
-                source=f.source.value,
-                short_label=result.finding_labels.get(f.fingerprint()),
-            )
+def _scan_response(scan_id: str, result: Any) -> ScanUrlResponse:
+    findings_out = [
+        FindingOut(
+            fingerprint=f.fingerprint(),
+            file=f.file,
+            line=f.line,
+            cwe=f.cwe,
+            severity=f.severity.value,
+            title=f.title,
+            rationale=f.rationale,
+            exploit=f.exploit,
+            fix=f.fix,
+            rule_id=f.rule_id,
+            confidence=f.confidence,
+            source=f.source.value,
+            short_label=result.finding_labels.get(f.fingerprint()),
         )
-
-    await _persist_scan_result(
-        scan_id=scan_id,
-        provider="github",
-        repo_slug=result.repo,
-        pr_id=str(result.pr_number),
-        head_sha=result.head_sha,
-        files_scanned=result.files_scanned_paths,
-        degraded=result.degraded_reasons,
-        findings=result.findings,
-        summary=result.summary,
-        finding_labels=result.finding_labels,
-    )
-
+        for f in result.findings
+    ]
     return ScanUrlResponse(
         scan_id=scan_id,
         repo=result.repo,
@@ -405,6 +396,282 @@ async def scan_url(req: ScanUrlRequest) -> ScanUrlResponse:
         findings=findings_out,
         summary=result.summary,
     )
+
+
+async def _scan_registered_pr_response(
+    repo: Repository,
+    pr_number: int,
+    access_token: str | None,
+    lang: str,
+    engine: str = "auto",
+) -> ScanUrlResponse:
+    result = await run_scan(
+        _repo_pr_url(repo, pr_number),
+        token=access_token,
+        lang=lang,
+        prefer_graph=_engine_to_pref(engine),
+    )
+    if result.error:
+        raise HTTPException(status_code=422, detail=result.error)
+    scan_id = uuid.uuid4().hex
+    await _persist_scan_result(
+        scan_id=scan_id,
+        provider=repo.provider or "github",
+        repo_slug=result.repo,
+        pr_id=str(result.pr_number),
+        head_sha=result.head_sha,
+        files_scanned=result.files_scanned_paths,
+        degraded=result.degraded_reasons,
+        findings=result.findings,
+        summary=result.summary,
+        finding_labels=result.finding_labels,
+    )
+    return _scan_response(scan_id, result)
+
+
+_FULL_SCAN_EXTS = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".rb", ".php",
+    ".c", ".h", ".cpp", ".cc", ".cs", ".rs", ".kt", ".scala", ".sh",
+    ".sql", ".yaml", ".yml", ".tf", ".dockerfile",
+}
+_FULL_SCAN_MAX_FILES = 80
+_FULL_SCAN_MAX_FILE_BYTES = 60_000
+
+
+def _is_full_scan_candidate(path: str) -> bool:
+    low = path.lower()
+    if low.endswith("dockerfile") or "/dockerfile" in low:
+        return True
+    return any(low.endswith(ext) for ext in _FULL_SCAN_EXTS)
+
+
+def _file_as_added_change(path: str, text: str) -> FileChange:
+    from aegis.providers.diffparse import language_of
+
+    lines = text.splitlines()[:1200]
+    diff_lines = [
+        DiffLine(
+            kind=LineKind.ADD,
+            content=line,
+            new_lineno=i,
+            old_lineno=None,
+            diff_position=i + 1,
+        )
+        for i, line in enumerate(lines, start=1)
+    ]
+    return FileChange(
+        path=path,
+        old_path=None,
+        status="added",
+        is_binary=False,
+        language=language_of(path),
+        hunks=[
+            Hunk(
+                old_start=0,
+                old_count=0,
+                new_start=1,
+                new_count=len(diff_lines),
+                header=f"@@ -0,0 +1,{len(diff_lines)} @@",
+                lines=diff_lines,
+            )
+        ],
+    )
+
+
+async def _github_default_branch(repo: Repository, token: str | None) -> tuple[str, str]:
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get(
+            f"{_GH_API}/repos/{repo.slug}",
+            headers=_gh_headers(token),
+        )
+    if r.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub API error {r.status_code}: {r.text[:160]}",
+        )
+    data = r.json()
+    return str(data.get("default_branch") or "main"), str(data.get("pushed_at") or "")
+
+
+async def _gitlab_default_branch(repo: Repository, token: str | None) -> tuple[str, str]:
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get(
+            f"{_gl_api_base()}/projects/{quote(repo.slug, safe='')}",
+            headers=_gl_headers(token),
+        )
+    if r.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitLab API error {r.status_code}: {r.text[:160]}",
+        )
+    data = r.json()
+    return str(data.get("default_branch") or "main"), str(data.get("last_activity_at") or "")
+
+
+async def _github_full_files(repo: Repository, token: str | None, branch: str) -> list[FileChange]:
+    async with httpx.AsyncClient(timeout=30) as client:
+        tree = await client.get(
+            f"{_GH_API}/repos/{repo.slug}/git/trees/{quote(branch, safe='')}",
+            params={"recursive": "1"},
+            headers=_gh_headers(token),
+        )
+        if tree.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"GitHub tree error {tree.status_code}: {tree.text[:160]}",
+            )
+        entries = [
+            item for item in tree.json().get("tree", [])
+            if item.get("type") == "blob"
+            and _is_full_scan_candidate(str(item.get("path") or ""))
+            and int(item.get("size") or 0) <= _FULL_SCAN_MAX_FILE_BYTES
+        ][:_FULL_SCAN_MAX_FILES]
+        out: list[FileChange] = []
+        for item in entries:
+            path = str(item["path"])
+            raw = await client.get(
+                f"{_GH_API}/repos/{repo.slug}/contents/{quote(path, safe='/')}",
+                params={"ref": branch},
+                headers={**_gh_headers(token), "Accept": "application/vnd.github.raw+json"},
+            )
+            if raw.status_code == 200 and raw.text:
+                out.append(_file_as_added_change(path, raw.text))
+        return out
+
+
+async def _gitlab_full_files(repo: Repository, token: str | None, branch: str) -> list[FileChange]:
+    async with httpx.AsyncClient(timeout=30) as client:
+        tree = await client.get(
+            f"{_gl_api_base()}/projects/{quote(repo.slug, safe='')}/repository/tree",
+            params={"recursive": "true", "per_page": _FULL_SCAN_MAX_FILES * 4, "ref": branch},
+            headers=_gl_headers(token),
+        )
+        if tree.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"GitLab tree error {tree.status_code}: {tree.text[:160]}",
+            )
+        entries = [
+            item for item in tree.json()
+            if item.get("type") == "blob"
+            and _is_full_scan_candidate(str(item.get("path") or ""))
+        ][:_FULL_SCAN_MAX_FILES]
+        out: list[FileChange] = []
+        for item in entries:
+            path = str(item["path"])
+            file_url = (
+                f"{_gl_api_base()}/projects/{quote(repo.slug, safe='')}"
+                f"/repository/files/{quote(path, safe='')}/raw"
+            )
+            raw = await client.get(
+                file_url,
+                params={"ref": branch},
+                headers=_gl_headers(token),
+            )
+            if raw.status_code == 200 and len(raw.content) <= _FULL_SCAN_MAX_FILE_BYTES:
+                out.append(_file_as_added_change(path, raw.text))
+        return out
+
+
+async def _scan_registered_repo_response(
+    repo: Repository,
+    access_token: str | None,
+    lang: str,
+) -> ScanUrlResponse:
+    from types import SimpleNamespace
+
+    from aegis.pipeline.deterministic.secrets import scan_secrets
+    from aegis.pipeline.simple_scan import _generate_scan_review, _run_llm
+
+    if repo.provider == "gitlab":
+        branch, marker = await _gitlab_default_branch(repo, access_token)
+        code_files = await _gitlab_full_files(repo, access_token, branch)
+        provider = "gitlab"
+        repo_url = f"{_gl_web_base()}/{repo.slug}"
+    else:
+        branch, marker = await _github_default_branch(repo, access_token)
+        code_files = await _github_full_files(repo, access_token, branch)
+        provider = "github"
+        repo_url = f"https://github.com/{repo.slug}"
+
+    det_findings = scan_secrets(code_files)
+    findings, degraded_reasons = await _run_llm(repo.slug, 0, code_files, det_findings, lang=lang)
+    _sev_order = {Severity.CRITICAL: 0, Severity.HIGH: 1, Severity.MEDIUM: 2, Severity.LOW: 3}
+    findings.sort(key=lambda f: _sev_order.get(f.severity, 9))
+    summary, finding_labels = await _generate_scan_review(
+        repo.slug,
+        0,
+        f"Full repository scan: {branch}",
+        len(code_files),
+        findings,
+        degraded_reasons,
+        lang=lang,
+    )
+    scan_id = uuid.uuid4().hex
+    await _persist_scan_result(
+        scan_id=scan_id,
+        provider=provider,
+        repo_slug=repo.slug,
+        pr_id=f"repo:{branch}",
+        head_sha=marker or branch,
+        files_scanned=[f.path for f in code_files],
+        degraded=degraded_reasons,
+        findings=findings,
+        summary=summary,
+        finding_labels=finding_labels,
+    )
+    return _scan_response(
+        scan_id,
+        SimpleNamespace(
+            repo=repo.slug,
+            pr_number=0,
+            pr_title=f"Full repository scan: {branch}",
+            pr_url=repo_url,
+            pr_author="",
+            files_scanned=len(code_files),
+            degraded=bool(degraded_reasons),
+            findings=findings,
+            summary=summary,
+            finding_labels=finding_labels,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/ext/scan/url
+# ---------------------------------------------------------------------------
+
+
+@router.post("/scan/url", response_model=ScanUrlResponse)
+async def scan_url(req: ScanUrlRequest) -> ScanUrlResponse:
+    """Scan a GitHub PR URL. No auth required."""
+    from aegis.pipeline.simple_scan import _parse_repo_url
+
+    result = await run_scan(
+        req.url,
+        req.token or None,
+        lang=req.lang,
+        prefer_graph=_engine_to_pref(req.engine),
+    )
+    if result.error:
+        raise HTTPException(status_code=422, detail=result.error)
+    scan_id = uuid.uuid4().hex
+    provider = _parse_repo_url(req.url)[0]
+
+    await _persist_scan_result(
+        scan_id=scan_id,
+        provider=provider,
+        repo_slug=result.repo,
+        pr_id=str(result.pr_number),
+        head_sha=result.head_sha,
+        files_scanned=result.files_scanned_paths,
+        degraded=result.degraded_reasons,
+        findings=result.findings,
+        summary=result.summary,
+        finding_labels=result.finding_labels,
+    )
+
+    return _scan_response(scan_id, result)
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +736,7 @@ async def list_ext_repos(user: User = _user_dep) -> list[RepoInfoOut]:
 
 @router.get("/repos/{repo_id}/prs", response_model=list[PRInfoOut])
 async def list_repo_prs(repo_id: int, user: User = _user_dep) -> list[PRInfoOut]:
-    """Fetch open PRs from GitHub + attach last scan per PR."""
+    """Fetch recent PRs/MRs from the provider + attach last scan per PR."""
     async with get_session() as session:
         repo = (
             await session.execute(
@@ -492,16 +759,29 @@ async def list_repo_prs(repo_id: int, user: User = _user_dep) -> list[PRInfoOut]
     access_token = await _get_repo_access_token(repo)
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.get(
-                f"{_GH_API}/repos/{repo.slug}/pulls",
-                params={"state": "open", "per_page": 30},
-                headers=_gh_headers(access_token),
-            )
+        if repo.provider == "gitlab":
+            async with httpx.AsyncClient(timeout=20) as client:
+                r = await client.get(
+                    f"{_gl_api_base()}/projects/{quote(repo.slug, safe='')}/merge_requests",
+                    params={
+                        "state": "all",
+                        "order_by": "updated_at",
+                        "sort": "desc",
+                        "per_page": 50,
+                    },
+                    headers=_gl_headers(access_token),
+                )
+        else:
+            async with httpx.AsyncClient(timeout=20) as client:
+                r = await client.get(
+                    f"{_GH_API}/repos/{repo.slug}/pulls",
+                    params={"state": "all", "per_page": 50, "sort": "updated", "direction": "desc"},
+                    headers=_gh_headers(access_token),
+                )
         if r.status_code != 200:
             raise HTTPException(
                 status_code=502,
-                detail=f"GitHub API error {r.status_code}: {r.text[:200]}",
+                detail=f"{repo.provider} API error {r.status_code}: {r.text[:200]}",
             )
         prs_data: list[dict[str, Any]] = r.json()
     except HTTPException:
@@ -533,20 +813,33 @@ async def list_repo_prs(repo_id: int, user: User = _user_dep) -> list[PRInfoOut]
 
     out: list[PRInfoOut] = []
     for pr in prs_data:
-        pr_num = pr["number"]
+        raw_number = pr.get("iid") if repo.provider == "gitlab" else pr.get("number")
+        pr_num = int(raw_number or 0)
         pr_id_str = str(pr_num)
         last_scan_row = latest_scan.get(pr_id_str)
+        if repo.provider == "gitlab":
+            author = (pr.get("author") or {}).get("username", "")
+            url = pr.get("web_url", "")
+            head_branch = pr.get("source_branch", "")
+            base_branch = pr.get("target_branch", "")
+            draft = bool(pr.get("draft") or pr.get("work_in_progress"))
+        else:
+            author = (pr.get("user") or {}).get("login", "")
+            url = pr.get("html_url", "")
+            head_branch = (pr.get("head") or {}).get("ref", "")
+            base_branch = (pr.get("base") or {}).get("ref", "")
+            draft = bool(pr.get("draft", False))
         out.append(
             PRInfoOut(
                 pr_number=pr_num,
                 title=pr.get("title", ""),
-                author=(pr.get("user") or {}).get("login", ""),
-                url=pr.get("html_url", ""),
-                head_branch=(pr.get("head") or {}).get("ref", ""),
-                base_branch=(pr.get("base") or {}).get("ref", ""),
+                author=author,
+                url=url,
+                head_branch=head_branch,
+                base_branch=base_branch,
                 created_at=pr.get("created_at", ""),
                 updated_at=pr.get("updated_at", ""),
-                draft=bool(pr.get("draft", False)),
+                draft=draft,
                 last_scan=_scan_summary_from_row(last_scan_row) if last_scan_row else None,
             )
         )
@@ -873,63 +1166,12 @@ async def scan_pr(req: ScanPRRequest, user: User = _user_dep) -> ScanUrlResponse
                 raise HTTPException(status_code=404, detail="repo not found")
 
     access_token = await _get_repo_access_token(repo)
-
-    # Construct GitHub PR URL from slug + pr_number
-    pr_url = f"https://github.com/{repo.slug}/pull/{req.pr_number}"
-
-    result = await run_scan(
-        pr_url,
-        token=access_token,
-        lang=req.lang,
-        prefer_graph=_engine_to_pref(getattr(req, "engine", "auto")),
-    )
-    if result.error:
-        raise HTTPException(status_code=422, detail=result.error)
-    scan_id = uuid.uuid4().hex
-
-    findings_out: list[FindingOut] = [
-        FindingOut(
-            fingerprint=f.fingerprint(),
-            file=f.file,
-            line=f.line,
-            cwe=f.cwe,
-            severity=f.severity.value,
-            title=f.title,
-            rationale=f.rationale,
-            exploit=f.exploit,
-            fix=f.fix,
-            rule_id=f.rule_id,
-            confidence=f.confidence,
-            source=f.source.value,
-            short_label=result.finding_labels.get(f.fingerprint()),
-        )
-        for f in result.findings
-    ]
-
-    await _persist_scan_result(
-        scan_id=scan_id,
-        provider=repo.provider or "github",
-        repo_slug=result.repo,
-        pr_id=str(result.pr_number),
-        head_sha=result.head_sha,
-        files_scanned=result.files_scanned_paths,
-        degraded=result.degraded_reasons,
-        findings=result.findings,
-        summary=result.summary,
-        finding_labels=result.finding_labels,
-    )
-
-    return ScanUrlResponse(
-        scan_id=scan_id,
-        repo=result.repo,
-        pr_number=result.pr_number,
-        pr_title=result.pr_title,
-        pr_url=result.pr_url,
-        pr_author=result.pr_author,
-        files_scanned=result.files_scanned,
-        degraded=result.degraded,
-        findings=findings_out,
-        summary=result.summary,
+    return await _scan_registered_pr_response(
+        repo,
+        req.pr_number,
+        access_token,
+        req.lang,
+        getattr(req, "engine", "auto"),
     )
 
 
@@ -964,7 +1206,13 @@ async def scan_branch(req: ScanBranchRequest) -> ScanUrlResponse:
     # Deterministic secrets scan
     det_findings = scan_secrets(code_files)
 
-    all_findings, degraded_reasons = await _run_llm(req.repo_slug, 0, code_files, det_findings)
+    all_findings, degraded_reasons = await _run_llm(
+        req.repo_slug,
+        0,
+        code_files,
+        det_findings,
+        lang=req.lang,
+    )
     _sev_order = {Severity.CRITICAL: 0, Severity.HIGH: 1, Severity.MEDIUM: 2, Severity.LOW: 3}
     all_findings.sort(key=lambda f: _sev_order.get(f.severity, 9))
 

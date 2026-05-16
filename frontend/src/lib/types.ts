@@ -38,10 +38,34 @@ export interface ScanSummary {
   started_at: string;
 }
 
+export interface ConnectedPR {
+  repo_id: number;
+  repo_slug: string;
+  provider: string;
+  pr_number: number;
+  title: string;
+  author: string;
+  url: string;
+  head_branch: string;
+  base_branch: string;
+  state: string;
+  created_at: string;
+  updated_at: string;
+  draft: boolean;
+  last_scan?: {
+    id: string;
+    risk_score: number;
+    risk_label: string;
+    status: string;
+    started_at: string;
+  } | null;
+}
+
 export interface ProjectDetail {
   project: { id: number; name: string; description: string };
   repos: Repo[];
   scans: ScanSummary[];
+  pull_requests: ConnectedPR[];
 }
 
 export interface QuickConnectResult {
@@ -51,6 +75,7 @@ export interface QuickConnectResult {
   webhook_secret: string;
   webhook_url: string;
   github_hook_id: number | null;
+  provider?: string;
 }
 
 export interface ReviewFinding {

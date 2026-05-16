@@ -6,21 +6,23 @@ from typing import Any
 
 from aegis.graph.agents._trace import traced
 from aegis.graph.state import ScanGraphState
-from aegis.pipeline.simple_scan import _fetch_diff, _fetch_latest_pr, _fetch_pr
+from aegis.pipeline.simple_scan import _fetch_changes, _fetch_latest, _fetch_one
 
 
 @traced("fetch_pr")
 async def fetch_pr_agent(state: ScanGraphState) -> dict[str, Any]:
+    kind = state.get("provider_kind", "github")
+    api_base = state.get("api_base", "https://api.github.com")
     slug = state.get("slug", "")
     pr_number = state.get("pr_number") or None
     token = state.get("token")
 
     try:
         if not pr_number:
-            pr_data = await _fetch_latest_pr(slug, token)
+            pr_data = await _fetch_latest(kind, api_base, slug, token)
             pr_number = int(pr_data["number"])
         else:
-            pr_data = await _fetch_pr(slug, pr_number, token)
+            pr_data = await _fetch_one(kind, api_base, slug, pr_number, token)
     except ValueError as exc:
         return {"error": str(exc)}
 
@@ -35,11 +37,13 @@ async def fetch_pr_agent(state: ScanGraphState) -> dict[str, Any]:
 
 @traced("fetch_diff")
 async def fetch_diff_agent(state: ScanGraphState) -> dict[str, Any]:
+    kind = state.get("provider_kind", "github")
+    api_base = state.get("api_base", "https://api.github.com")
     slug = state.get("slug", "")
     pr_number = int(state.get("pr_number") or 0)
     token = state.get("token")
     try:
-        diff_text = await _fetch_diff(slug, pr_number, token)
+        diff_text = await _fetch_changes(kind, api_base, slug, pr_number, token)
     except ValueError as exc:
         return {"error": str(exc)}
     return {"diff_text": diff_text}

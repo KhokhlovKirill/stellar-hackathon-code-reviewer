@@ -101,10 +101,12 @@ async def _try_unload(base_url: str, model_id: str) -> bool:
         return False
 
 
-async def ensure_model(base_url: str, model_id: str) -> str:
+async def ensure_model(base_url: str, model_id: str, *, unload_others: bool = True) -> str:
     """Ensure model_id is loaded in LM Studio. Returns the model ID to use.
 
-    If programmatic load is available: unloads others, loads target.
+    If programmatic load is available: loads target. When ``unload_others`` is
+    true, unloads other LLMs to save RAM; when false, leaves Don and embedding
+    models resident so scans do not constantly churn LM Studio state.
     If not: returns whatever LLM is currently loaded (user manages via UI).
     Falls back to model_id itself so the completion request can still be made.
     """
@@ -119,10 +121,10 @@ async def ensure_model(base_url: str, model_id: str) -> str:
         api_works = await _try_load(base_url, model_id)
 
         if api_works:
-            # Unload all others to free memory
-            for m in currently:
-                if m != model_id:
-                    await _try_unload(base_url, m)
+            if unload_others:
+                for m in currently:
+                    if m != model_id:
+                        await _try_unload(base_url, m)
             return model_id
 
         # API not supported — use what's loaded
@@ -142,6 +144,11 @@ async def ensure_model(base_url: str, model_id: str) -> str:
             hint="Load the model in LM Studio UI first",
         )
         return model_id  # let the completion fail with a clear model-not-loaded error
+
+
+async def load_model_no_unload(base_url: str, model_id: str) -> bool:
+    """Best-effort load for small sidecar models such as embeddings."""
+    return await _try_load(base_url, model_id)
 
 
 async def unload_all(base_url: str) -> None:

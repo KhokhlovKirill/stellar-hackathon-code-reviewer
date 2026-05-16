@@ -58,7 +58,7 @@ class Settings(BaseSettings):
         "qwen/qwen-2.5-coder-32b-instruct", alias="OPENROUTER_GENERALIST_MODEL"
     )
     openrouter_judge_model: str = Field(
-        "anthropic/claude-3.7-sonnet", alias="OPENROUTER_JUDGE_MODEL"
+        "xiaomi/mimo-v2-flash", alias="OPENROUTER_JUDGE_MODEL"
     )
     openrouter_mimo_model: str = Field(
         "xiaomi/mimo-v2-flash", alias="OPENROUTER_MIMO_MODEL"
@@ -82,7 +82,7 @@ class Settings(BaseSettings):
         "text-embedding-nomic-embed-text-v1.5", alias="LMSTUDIO_EMBED_MODEL"
     )
     # Sequential model swap: unload previous model before loading next (saves RAM)
-    lmstudio_swap_models: bool = Field(True, alias="LMSTUDIO_SWAP_MODELS")
+    lmstudio_swap_models: bool = Field(False, alias="LMSTUDIO_SWAP_MODELS")
 
     # LangGraph orchestrator opt-in. When True, /api/ext/scan/* routes the
     # pull-mode scan through the LangGraph DAG instead of the direct

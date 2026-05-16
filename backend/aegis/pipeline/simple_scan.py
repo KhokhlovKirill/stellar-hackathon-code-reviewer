@@ -11,6 +11,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -55,21 +56,47 @@ class SimpleScanResult:
     finding_labels: dict[str, str] = field(default_factory=dict)
 
 
-def _parse_github_url(url: str) -> tuple[str, int | None]:
-    """Return (owner/repo, pr_number_or_None) from any GitHub URL."""
+def _parse_repo_url(url: str) -> tuple[str, str, str, int | None]:
+    """Parse a GitHub or (self-hosted) GitLab URL.
+
+    Returns ``(kind, api_base, slug, number)`` where:
+      * kind     — "github" | "gitlab"
+      * api_base — REST API root (GitHub: api.github.com; GitLab: <host>/api/v4)
+      * slug     — owner/repo (GitHub) or full project path incl. subgroups
+                   (GitLab, e.g. "hackathon4/fake_rep1")
+      * number   — PR/MR number, or None to pick the latest
+
+    Accepted forms:
+      github.com/owner/repo[/pull/N]
+      https://<host>/group[/subgroup…]/repo[/-/merge_requests/N]   (GitLab)
+      owner/repo  (bare slug → GitHub)
+    """
     url = url.strip().rstrip("/")
-    # PR URL: github.com/owner/repo/pull/123
-    m = re.search(r"github\.com/([^/]+/[^/]+)/pull/(\d+)", url)
+
+    # ── GitHub ────────────────────────────────────────────────────────────────
+    m = re.search(r"github\.com/([^/]+/[^/]+?)(?:\.git)?/pull/(\d+)", url)
     if m:
-        return m.group(1).removesuffix(".git"), int(m.group(2))
-    # Repo URL: github.com/owner/repo
-    m = re.search(r"github\.com/([^/]+/[^/]+)", url)
+        return "github", _GH_API, m.group(1), int(m.group(2))
+    m = re.search(r"github\.com/([^/]+/[^/]+?)(?:\.git)?(?:/[^0-9].*)?$", url)
     if m:
-        return m.group(1).removesuffix(".git"), None
-    # bare slug: owner/repo
+        return "github", _GH_API, m.group(1).removesuffix(".git"), None
+
+    # ── GitLab (gitlab.com or self-hosted, arbitrary host) ───────────────────
+    m = re.match(r"^https?://([^/]+)/(.+)$", url)
+    if m and "github.com" not in m.group(1):
+        host, rest = m.group(1), m.group(2)
+        mr = re.search(r"/-/merge_requests/(\d+)", rest)
+        number = int(mr.group(1)) if mr else None
+        # Strip GitLab's "/-/<anything>" suffix to get the project path.
+        project = re.split(r"/-/", rest)[0].strip("/").removesuffix(".git")
+        if project and "/" in project:
+            return "gitlab", f"https://{host}/api/v4", project, number
+
+    # ── bare slug → GitHub ────────────────────────────────────────────────────
     if re.match(r"^[^/]+/[^/]+$", url):
-        return url, None
-    raise ValueError(f"Cannot parse GitHub URL: {url!r}")
+        return "github", _GH_API, url, None
+
+    raise ValueError(f"Cannot parse repository URL: {url!r}")
 
 
 def _gh_headers(token: str | None) -> dict[str, str]:
@@ -146,6 +173,117 @@ async def _fetch_diff(slug: str, pr_number: int, token: str | None) -> str:
         parts.append(header)
 
     return "\n".join(parts)
+
+
+# ── GitLab (gitlab.com + self-hosted) pull-mode fetchers ──────────────────────
+# MR JSON is normalized to the GitHub-shaped dict the scanner already reads,
+# so the rest of run_simple_scan stays provider-agnostic.
+
+
+def _gl_headers(token: str | None) -> dict[str, str]:
+    return {"PRIVATE-TOKEN": token} if token else {}
+
+
+def _gl_err(r: httpx.Response) -> str:
+    try:
+        return str(r.json().get("message") or r.json().get("error") or "error")
+    except Exception:
+        return r.text[:200]
+
+
+def _gl_normalize_mr(mr: dict[str, Any]) -> dict[str, Any]:
+    refs = mr.get("diff_refs") or {}
+    return {
+        "number": mr.get("iid"),
+        "title": mr.get("title", ""),
+        "html_url": mr.get("web_url", ""),
+        "user": {"login": (mr.get("author") or {}).get("username", "unknown")},
+        "head": {"sha": refs.get("head_sha") or mr.get("sha", "")},
+    }
+
+
+async def _fetch_latest_mr(api_base: str, slug: str, token: str | None) -> dict[str, Any]:
+    pid = quote(slug, safe="")
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get(
+            f"{api_base}/projects/{pid}/merge_requests",
+            params={"state": "all", "order_by": "updated_at", "sort": "desc", "per_page": 1},
+            headers=_gl_headers(token),
+        )
+    if r.status_code != 200:
+        raise ValueError(f"GitLab API {r.status_code}: {_gl_err(r)}")
+    mrs = r.json()
+    if not isinstance(mrs, list) or not mrs:
+        raise ValueError("No merge requests found in this repository")
+    return _gl_normalize_mr(mrs[0])
+
+
+async def _fetch_mr(
+    api_base: str, slug: str, mr_number: int, token: str | None
+) -> dict[str, Any]:
+    pid = quote(slug, safe="")
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get(
+            f"{api_base}/projects/{pid}/merge_requests/{mr_number}",
+            headers=_gl_headers(token),
+        )
+    if r.status_code != 200:
+        raise ValueError(f"GitLab API {r.status_code}: {_gl_err(r)}")
+    return _gl_normalize_mr(r.json())
+
+
+async def _fetch_diff_gl(
+    api_base: str, slug: str, mr_number: int, token: str | None
+) -> str:
+    pid = quote(slug, safe="")
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(
+            f"{api_base}/projects/{pid}/merge_requests/{mr_number}/changes",
+            headers=_gl_headers(token),
+        )
+    if r.status_code != 200:
+        raise ValueError(f"Diff fetch failed: HTTP {r.status_code}: {_gl_err(r)}")
+    data = r.json()
+    changes = data.get("changes", []) if isinstance(data, dict) else []
+    parts: list[str] = []
+    total_bytes = 0
+    for ch in changes:
+        patch = ch.get("diff", "")
+        if not patch:
+            continue
+        old_name = ch.get("old_path", ch.get("new_path", ""))
+        new_name = ch.get("new_path", old_name)
+        header = f"--- a/{old_name}\n+++ b/{new_name}\n{patch}\n"
+        total_bytes += len(header)
+        if total_bytes > _MAX_DIFF_BYTES:
+            break
+        parts.append(header)
+    return "\n".join(parts)
+
+
+# ── Provider dispatchers (used by run_simple_scan + graph agents) ─────────────
+
+
+async def _fetch_latest(kind: str, api_base: str, slug: str, token: str | None) -> dict[str, Any]:
+    if kind == "gitlab":
+        return await _fetch_latest_mr(api_base, slug, token)
+    return await _fetch_latest_pr(slug, token)
+
+
+async def _fetch_one(
+    kind: str, api_base: str, slug: str, number: int, token: str | None
+) -> dict[str, Any]:
+    if kind == "gitlab":
+        return await _fetch_mr(api_base, slug, number, token)
+    return await _fetch_pr(slug, number, token)
+
+
+async def _fetch_changes(
+    kind: str, api_base: str, slug: str, number: int, token: str | None
+) -> str:
+    if kind == "gitlab":
+        return await _fetch_diff_gl(api_base, slug, number, token)
+    return await _fetch_diff(slug, number, token)
 
 
 def _filter_files(files: list[FileChange]) -> list[FileChange]:
@@ -636,22 +774,22 @@ async def run_simple_scan(
     token: str | None = None,
     lang: str = "ru",
 ) -> SimpleScanResult:
-    """Main entry point: GitHub URL → analysis result."""
+    """Main entry point: GitHub or GitLab (incl. self-hosted) URL → result."""
     try:
-        slug, pr_number = _parse_github_url(url)
+        kind, api_base, slug, pr_number = _parse_repo_url(url)
     except ValueError as exc:
         return SimpleScanResult(
             repo="", pr_number=0, pr_title="", pr_url=url, pr_author="",
             error=str(exc),
         )
 
-    # Fetch PR metadata
+    # Fetch PR/MR metadata
     try:
         if pr_number is None:
-            pr_data = await _fetch_latest_pr(slug, token)
+            pr_data = await _fetch_latest(kind, api_base, slug, token)
             pr_number = int(pr_data["number"])
         else:
-            pr_data = await _fetch_pr(slug, pr_number, token)
+            pr_data = await _fetch_one(kind, api_base, slug, pr_number, token)
     except ValueError as exc:
         return SimpleScanResult(
             repo=slug, pr_number=pr_number or 0, pr_title="", pr_url=url, pr_author="",
@@ -665,7 +803,7 @@ async def run_simple_scan(
 
     # Fetch unified diff
     try:
-        diff_text = await _fetch_diff(slug, pr_number, token)
+        diff_text = await _fetch_changes(kind, api_base, slug, pr_number, token)
     except ValueError as exc:
         return SimpleScanResult(
             repo=slug, pr_number=pr_number, pr_title=pr_title,

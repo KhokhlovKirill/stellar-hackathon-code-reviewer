@@ -101,7 +101,74 @@ function runStdin(
 const runGitApply = (root: string, args: string[], patch: string) =>
   runStdin("git", root, args, patch);
 
+type ParsedHunk = {
+  oldStart: number;
+  oldLines: string[];
+  newLines: string[];
+  removedLines: string[];
+  addedLines: string[];
+};
+
+function parseHunksForDirectApply(patch: string): ParsedHunk[] {
+  const hunks: ParsedHunk[] = [];
+  let current: ParsedHunk | null = null;
+  for (const line of patch.split("\n")) {
+    const h = line.match(/^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/);
+    if (h) {
+      current = {
+        oldStart: parseInt(h[1], 10),
+        oldLines: [],
+        newLines: [],
+        removedLines: [],
+        addedLines: [],
+      };
+      hunks.push(current);
+      continue;
+    }
+    if (!current || line.length === 0) continue;
+    const prefix = line[0];
+    const text = line.slice(1);
+    if (prefix === " ") {
+      current.oldLines.push(text);
+      current.newLines.push(text);
+    } else if (prefix === "-") {
+      current.oldLines.push(text);
+      current.removedLines.push(text);
+    } else if (prefix === "+") {
+      current.newLines.push(text);
+      current.addedLines.push(text);
+    }
+  }
+  return hunks;
+}
+
+function findBlock(lines: string[], block: string[], preferredLine: number): number {
+  if (block.length === 0 || block.length > lines.length) return -1;
+  const matchesAt = (idx: number) =>
+    block.every((line, offset) => lines[idx + offset] === line);
+  const preferred = Math.max(preferredLine - 1, 0);
+  const windowStart = Math.max(preferred - 80, 0);
+  const windowEnd = Math.min(preferred + 80, lines.length - block.length);
+  for (let i = windowStart; i <= windowEnd; i++) {
+    if (matchesAt(i)) return i;
+  }
+  for (let i = 0; i <= lines.length - block.length; i++) {
+    if (matchesAt(i)) return i;
+  }
+  return -1;
+}
+
 export class GitProvider {
+  private async getOriginUrl(): Promise<string | null> {
+    const root = getWorkspaceRoot();
+    if (!root) return null;
+    try {
+      return (await git(root, "remote", "get-url", "origin")).trim();
+    } catch {
+      return null;
+    }
+  }
+
   async getCurrentBranch(): Promise<string | null> {
     const root = getWorkspaceRoot();
     if (!root) return null;
@@ -159,25 +226,43 @@ export class GitProvider {
   }
 
   async getRepoSlug(): Promise<string | null> {
-    const root = getWorkspaceRoot();
-    if (!root) return null;
-    try {
-      const remoteUrl = (
-        await git(root, "remote", "get-url", "origin")
-      ).trim();
+    const info = await this.getRepoRemoteInfo();
+    return info?.slug ?? null;
+  }
 
-      // SSH: git@github.com:owner/repo.git
-      const sshMatch = remoteUrl.match(/git@github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
-      if (sshMatch) return sshMatch[1];
+  async getRepoRemoteInfo(): Promise<{
+    provider: "github" | "gitlab" | "unknown";
+    slug: string;
+    url: string;
+    host: string;
+  } | null> {
+    const remoteUrl = await this.getOriginUrl();
+    if (!remoteUrl) return null;
 
-      // HTTPS: https://github.com/owner/repo.git
-      const httpsMatch = remoteUrl.match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/);
-      if (httpsMatch) return httpsMatch[1];
-
-      return null;
-    } catch {
-      return null;
+    const ssh = remoteUrl.match(/^git@([^:]+):(.+?)(?:\.git)?$/);
+    if (ssh) {
+      const host = ssh[1];
+      const slug = ssh[2].replace(/\.git$/, "");
+      return {
+        provider: host === "github.com" ? "github" : "gitlab",
+        slug,
+        url: remoteUrl,
+        host,
+      };
     }
+
+    const https = remoteUrl.match(/^https?:\/\/([^/]+)\/(.+?)(?:\.git)?$/);
+    if (https) {
+      const host = https[1];
+      const slug = https[2].replace(/\.git$/, "");
+      return {
+        provider: host === "github.com" ? "github" : "gitlab",
+        slug,
+        url: remoteUrl,
+        host,
+      };
+    }
+    return null;
   }
 
   /** All repo files (tracked + untracked, excluding ignored). */
@@ -310,6 +395,9 @@ export class GitProvider {
         sanitized = sanitizePatch(retargetSingleFilePatch(sanitized, resolved));
       }
     }
+    const directTarget = !isNewFile && targets.length === 1
+      ? await this.resolveTargetPath(root, targets[0], opts.hintFiles ?? [])
+      : null;
 
     type Strategy = {
       label: string;
@@ -392,6 +480,15 @@ export class GitProvider {
       }
     }
 
+    if (directTarget) {
+      try {
+        await this.applySingleFilePatchBySearch(root, directTarget, sanitized);
+        return;
+      } catch (err) {
+        errors.push(`[direct search apply] ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
     throw new Error(
       "git apply failed: the patch did not match the current contents of " +
         `${targets.join(", ") || "the target file"}. The file exists but has ` +
@@ -400,5 +497,37 @@ export class GitProvider {
         "manually.\n\n" +
         errors.join("\n")
     );
+  }
+
+  private async applySingleFilePatchBySearch(
+    root: string,
+    relPath: string,
+    sanitized: string
+  ): Promise<void> {
+    const filePath = path.join(root, relPath);
+    const original = fs.readFileSync(filePath, "utf8");
+    const newline = original.includes("\r\n") ? "\r\n" : "\n";
+    let lines = original.replace(/\r\n/g, "\n").split("\n");
+    const hadFinalNewline = lines.length > 0 && lines[lines.length - 1] === "";
+    if (hadFinalNewline) lines = lines.slice(0, -1);
+
+    for (const hunk of parseHunksForDirectApply(sanitized)) {
+      let idx = findBlock(lines, hunk.oldLines, hunk.oldStart);
+      let replaceLen = hunk.oldLines.length;
+      let replacement = hunk.newLines;
+
+      if (idx < 0 && hunk.removedLines.length > 0) {
+        idx = findBlock(lines, hunk.removedLines, hunk.oldStart);
+        replaceLen = hunk.removedLines.length;
+        replacement = hunk.addedLines;
+      }
+      if (idx < 0) {
+        throw new Error(`could not locate hunk near line ${hunk.oldStart}`);
+      }
+      lines.splice(idx, replaceLen, ...replacement);
+    }
+
+    const next = lines.join(newline) + (hadFinalNewline ? newline : "");
+    fs.writeFileSync(filePath, next, "utf8");
   }
 }

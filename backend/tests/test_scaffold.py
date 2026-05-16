@@ -20,12 +20,12 @@ from aegis.schemas import Finding, FindingSource, Severity
 
 
 def test_healthz_and_metrics() -> None:
-    client = TestClient(create_app())
-    r = client.get("/healthz")
-    assert r.status_code == 200 and r.json()["status"] == "ok"
-    m = client.get("/metrics")
-    assert m.status_code == 200
-    assert b"aegis_scans_total" in m.content
+    with TestClient(create_app()) as client:
+        r = client.get("/healthz")
+        assert r.status_code == 200 and r.json()["status"] == "ok"
+        m = client.get("/metrics")
+        assert m.status_code == 200
+        assert b"aegis_scans_total" in m.content
 
 
 def test_severity_ordering() -> None:
