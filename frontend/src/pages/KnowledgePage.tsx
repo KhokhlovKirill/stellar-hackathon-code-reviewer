@@ -736,6 +736,71 @@ const safe2 = structuredClone(untrustedData);`,
     tags: ["javascript", "nodejs", "prototype", "object"],
   },
   {
+    id: "hardcoded-crypto-key",
+    cwe: "CWE-321",
+    owasp: "A02:2021",
+    title: "Hardcoded Cryptographic Key",
+    severity: "critical",
+    category: "Криптография",
+    shortDesc: "Криптографический ключ захардкожен в исходном коде — любой с доступом к репозиторию может расшифровать данные.",
+    description:
+      "CWE-321 возникает когда симметричный ключ (AES, Fernet, HMAC) или приватный RSA/EC ключ вшит прямо в код. В отличие от обычных захардкоженных паролей (CWE-798), здесь атакующий получает не доступ к аккаунту, а возможность расшифровать всё зашифрованное этим ключом — базы данных, токены, резервные копии. Ротация ключа без замены кода невозможна.",
+    howItWorks:
+      "Разработчик генерирует Fernet/AES ключ локально и вставляет его в код для удобства. Ключ попадает в Git-историю. Атакующий, получив read-access к репозиторию (утечка, insider), расшифровывает все данные, зашифрованные этим ключом — в том числе токены GitHub, API-ключи, персональные данные пользователей.",
+    vulnCode: {
+      lang: "python",
+      code: `# ❌ УЯЗВИМО — ключ захардкожен
+from cryptography.fernet import Fernet
+
+# Ключ виден всем, у кого есть доступ к репозиторию
+SECRET_KEY = b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+cipher = Fernet(SECRET_KEY)
+
+# Хуже — ключ выводится из предсказуемой строки
+import hashlib
+key = hashlib.sha256(b"myapp_secret").digest()  # Брутфорс за секунды
+
+# JWT с захардкоженным секретом
+JWT_SECRET = "super-secret-key-do-not-share"
+token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")`,
+    },
+    fixCode: {
+      lang: "python",
+      code: `# ✅ БЕЗОПАСНО — ключ из переменной окружения
+import os
+from cryptography.fernet import Fernet
+
+# Генерация при первом деплое: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Затем сохранить в секрет-менеджер или .env (в .gitignore!)
+SECRET_KEY = os.environ["AEGIS_VAULT_KEY"].encode()
+cipher = Fernet(SECRET_KEY)
+
+# JWT — тоже из env
+JWT_SECRET = os.environ["JWT_SECRET"]  # cryptographically random, 256 bit
+token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+# Для production — ротация через AWS Secrets Manager / HashiCorp Vault
+from boto3 import client as boto_client
+secrets = boto_client("secretsmanager").get_secret_value(SecretId="prod/app/keys")`,
+    },
+    recommendations: [
+      "Никогда не коммитить ключи — добавить pre-commit hook: detect-secrets, gitleaks",
+      "Генерировать ключи криптографически: Fernet.generate_key(), secrets.token_bytes(32)",
+      "Хранить в переменных окружения или секрет-менеджере (AWS Secrets Manager, Vault, Doppler)",
+      "Настроить ротацию ключей: старые ключи хранить для расшифровки, новые для шифрования",
+      "Сканировать Git-историю на утечки: git log --all -p | gitleaks detect --pipe",
+      "При обнаружении утечки — считать все зашифрованные данные скомпрометированными",
+    ],
+    references: [
+      { label: "MITRE CWE-321", url: "https://cwe.mitre.org/data/definitions/321.html" },
+      { label: "OWASP Cryptographic Failures", url: "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/" },
+      { label: "OWASP Key Management", url: "https://cheatsheetseries.owasp.org/cheatsheets/Key_Management_Cheat_Sheet.html" },
+      { label: "Gitleaks", url: "https://github.com/gitleaks/gitleaks" },
+    ],
+    frequency: 17,
+    tags: ["cryptography", "fernet", "aes", "jwt", "secrets", "owasp-top10"],
+  },
+  {
     id: "vulnerable-dependency",
     cwe: "CWE-1395",
     owasp: "A06:2021",

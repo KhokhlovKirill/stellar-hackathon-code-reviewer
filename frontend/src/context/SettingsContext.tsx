@@ -15,6 +15,7 @@ export type Lang = "ru" | "en";
 // the backend chat/scan/review endpoints.
 const STRINGS = {
   ru: {
+    "nav.product": "Продукт",
     "nav.review": "Анализ",
     "nav.projects": "Проекты",
     "nav.chat": "Чат",
@@ -74,6 +75,7 @@ const STRINGS = {
     "common.error": "Ошибка",
   },
   en: {
+    "nav.product": "Product",
     "nav.review": "Review",
     "nav.projects": "Projects",
     "nav.chat": "Chat",

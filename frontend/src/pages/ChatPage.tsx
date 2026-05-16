@@ -64,11 +64,17 @@ export function ChatPage() {
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
-          <aside className="space-y-4">
+          {/* Chat — appears first on mobile */}
+          <div className="lg:col-span-2 order-1 lg:order-none">
+            <Chat quickQuestions={QUICK[lang]} className="h-[580px]" />
+          </div>
+
+          {/* Topics — appears after chat on mobile */}
+          <aside className="space-y-4 order-2 lg:order-none">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
               {isRu ? "Темы" : "Topics"}
             </p>
-            <div className="space-y-2">
+            <div className="grid grid-cols-2 lg:grid-cols-1 gap-2">
               {TOPICS[lang].map((c) => (
                 <div
                   key={c.label}
@@ -79,16 +85,12 @@ export function ChatPage() {
                     <p className="text-sm font-semibold text-slate-900 dark:text-white">
                       {c.label}
                     </p>
-                    <p className="text-xs text-slate-500">{c.desc}</p>
+                    <p className="text-xs text-slate-500 hidden sm:block">{c.desc}</p>
                   </div>
                 </div>
               ))}
             </div>
           </aside>
-
-          <div className="lg:col-span-2">
-            <Chat quickQuestions={QUICK[lang]} className="h-[580px]" />
-          </div>
         </div>
       </div>
     </RequireAuth>

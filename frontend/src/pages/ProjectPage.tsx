@@ -10,7 +10,7 @@ import { api, ApiError } from "../lib/api";
 import { riskBadge, riskLabel, riskScoreColor } from "../lib/severity";
 import type { ProjectDetail, QuickConnectResult } from "../lib/types";
 
-const DEFAULT_PUBLIC_URL = "http://localhost:8099";
+const DEFAULT_PUBLIC_URL = "https://aegis.khokhlovkirill.ru";
 
 const SEVERITY_OPTIONS = [
   { value: "low",      label: "Низкий",      color: "slate"  as const },
