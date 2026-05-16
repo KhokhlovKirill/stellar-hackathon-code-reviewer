@@ -108,13 +108,25 @@ def test_render_inline_comment_contains_fix_and_fingerprint() -> None:
 
 
 def test_render_summary_includes_score_files_and_breakdown() -> None:
+    # Fixture ctx.lang == "ru" → summary labels must be localized.
     state = _state([_finding()])
     state.risk_score = 40
     state.risk_label = "critical"
     summary = render_summary(state)
-    assert "Risk Score: **40/100**" in summary
+    assert "Оценка риска: **40/100**" in summary
     assert "`app/db.py`" in summary
     assert "`CWE-89`: +40" in summary
+    assert "Обзор безопасности Aegis" in summary
+
+
+def test_render_summary_english_when_lang_en() -> None:
+    state = _state([_finding()])
+    state.ctx.lang = "en"
+    state.risk_score = 40
+    state.risk_label = "critical"
+    summary = render_summary(state)
+    assert "Risk Score: **40/100**" in summary
+    assert "Aegis security review" in summary
 
 
 def test_policy_blocks_critical() -> None:

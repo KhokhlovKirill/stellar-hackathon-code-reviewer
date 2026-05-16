@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 from aegis.db import get_session
 from aegis.db.models import FindingRow
 from aegis.obs import get_logger
+from aegis.pipeline.i18n import localize_findings_inplace, t
 from aegis.pipeline.risk_score import risk_breakdown
 from aegis.pipeline.state import PipelineState
 from aegis.providers import get_provider
@@ -55,6 +56,12 @@ async def render_and_post(state: PipelineState) -> None:
 
     provider = get_provider(state.ev.provider)
     gate = _severity_rank(state.ctx.severity_gate)
+    lang = getattr(state.ctx, "lang", "en") or "en"
+
+    # Deterministic findings carry English template text — translate them to
+    # the repo's configured comment language before they are posted. LLM
+    # findings are already produced in that language by the analysis stage.
+    localize_findings_inplace(state.findings, lang)
 
     fingerprints = [f.fingerprint() for f in state.findings]
     existing = await _existing_comment_refs(state.pr.repo_slug, state.pr.pr_id, fingerprints)
@@ -69,7 +76,7 @@ async def render_and_post(state: PipelineState) -> None:
             state.posted_refs.append(existing[fp])
             skipped += 1
             continue
-        body = render_inline_comment(finding)
+        body = render_inline_comment(finding, lang)
         try:
             ref = await provider.post_inline_comment(
                 state.pr,
@@ -135,83 +142,86 @@ async def _index_published_findings(state: PipelineState, gate: int) -> None:
             log.warning("render.kb_index_failed", scan_id=state.scan_id, error=str(exc))
 
 
-def render_inline_comment(finding: Finding) -> str:
+def render_inline_comment(finding: Finding, lang: str = "en") -> str:
     parts = [
-        f"**Aegis security finding: {finding.severity.value.upper()}**",
+        f"**{t('finding_header', lang)}: {finding.severity.value.upper()}**",
         "",
         f"**{finding.title}**",
-        f"- CWE: `{finding.cwe or 'n/a'}`",
-        f"- Confidence: `{finding.confidence:.2f}`",
+        f"- {t('cwe', lang)}: `{finding.cwe or 'n/a'}`",
+        f"- {t('confidence', lang)}: `{finding.confidence:.2f}`",
         "",
         finding.rationale,
     ]
     if finding.exploit:
-        parts.extend(["", "**Exploit scenario**", finding.exploit])
+        parts.extend(["", f"**{t('exploit_scenario', lang)}**", finding.exploit])
     if finding.fix:
-        parts.extend(["", "**Suggested fix**"])
+        parts.extend(["", f"**{t('suggested_fix', lang)}**"])
         fence = "suggestion" if finding.fix_is_suggestion else ""
         parts.append(f"```{fence}\n{finding.fix}\n```")
-    parts.append(f"\nFinding fingerprint: `{finding.fingerprint()}`")
+    parts.append(f"\n{t('fingerprint', lang)}: `{finding.fingerprint()}`")
     return "\n".join(parts)
 
 
 def render_summary(state: PipelineState) -> str:
+    lang = getattr(state.ctx, "lang", "en") or "en"
     counts = _severity_counts(state.findings)
     breakdown = risk_breakdown(state.findings)
     lines = [
-        "## Aegis security review",
+        f"## {t('review_title', lang)}",
         "",
-        f"Risk Score: **{state.risk_score}/100** (`{state.risk_label}`)",
-        f"Scan ID: `{state.scan_id}`",
-        f"Head SHA: `{state.pr.head_sha}`",
+        f"{t('risk_score', lang)}: **{state.risk_score}/100** (`{state.risk_label}`)",
+        f"{t('scan_id', lang)}: `{state.scan_id}`",
+        f"{t('head_sha', lang)}: `{state.pr.head_sha}`",
         "",
-        "| Severity | Count |",
+        f"| {t('severity', lang)} | {t('count', lang)} |",
         "|---|---:|",
     ]
     for sev in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO):
         lines.append(f"| {sev.value} | {counts.get(sev.value, 0)} |")
 
-    lines.extend(["", "**Scanned files**"])
+    lines.extend(["", f"**{t('scanned_files', lang)}**"])
     lines.extend(f"- `{path}`" for path in state.result.files_scanned)
     if not state.result.files_scanned:
-        lines.append("- none")
+        lines.append(f"- {t('none', lang)}")
 
     if state.result.files_skipped:
-        lines.extend(["", "**Skipped files**"])
+        lines.extend(["", f"**{t('skipped_files', lang)}**"])
         for skipped in state.result.files_skipped[:30]:
             lines.append(f"- `{skipped['path']}`: {skipped['reason']}")
 
     if breakdown:
-        lines.extend(["", "**Risk breakdown**"])
+        lines.extend(["", f"**{t('risk_breakdown', lang)}**"])
         lines.extend(f"- `{k}`: +{v}" for k, v in sorted(breakdown.items()))
 
     if state.blast_radius_mermaid:
-        lines.extend(["", "**Blast Radius**", "```mermaid", state.blast_radius_mermaid, "```"])
+        lines.extend(
+            ["", f"**{t('blast_radius', lang)}**", "```mermaid", state.blast_radius_mermaid, "```"]
+        )
 
     if state.kb_matches:
-        lines.extend(["", "**Recurring patterns (Security KB)**"])
+        lines.extend(["", f"**{t('recurring_patterns', lang)}**"])
         for fp, hits in list(state.kb_matches.items())[:10]:
             top = hits[0]
             lines.append(
-                f"- `{fp[:8]}` similar to confirmed {top['cwe']} in "
-                f"PR #{top['pr_id']} (sim {top['similarity']})"
+                f"- `{fp[:8]}` {t('similar_to', lang)} {top['cwe']} "
+                f"{t('in_pr', lang)} #{top['pr_id']} (sim {top['similarity']})"
             )
 
     if state.result.degraded:
-        lines.extend(["", "**Degraded components**"])
+        lines.extend(["", f"**{t('degraded_components', lang)}**"])
         lines.extend(f"- `{item}`" for item in state.result.degraded)
 
     if state.suppressed_findings:
-        lines.extend(["", "**Suppressed by team feedback**"])
+        lines.extend(["", f"**{t('suppressed_by_feedback', lang)}**"])
         lines.extend(
             f"- `{finding.file}:{finding.line}` {finding.title}"
             for finding in state.suppressed_findings[:20]
         )
 
     if not state.findings:
-        lines.extend(["", "No confirmed security findings on changed code lines."])
+        lines.extend(["", t("no_findings", lang)])
     else:
-        lines.extend(["", "Reply to an Aegis thread with `@secbot why` for details."])
+        lines.extend(["", t("reply_hint", lang)])
 
     return "\n".join(lines)
 

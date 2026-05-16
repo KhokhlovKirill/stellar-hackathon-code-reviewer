@@ -34,3 +34,9 @@ htmlcov/
 
 # os
 .DS_Store
+
+# docs: only the single unified root README.md is published to GitHub.
+# All other markdown and the docs/ tree stay local-only.
+*.md
+!/README.md
+docs/

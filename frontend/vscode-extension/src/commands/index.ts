@@ -106,7 +106,7 @@ export function registerAllCommands(deps: CommandDeps): vscode.Disposable[] {
         const entered = await vscode.window.showInputBox({
           prompt: "Aegis backend URL",
           value: backendUrl,
-          placeHolder: "http://localhost:8080",
+          placeHolder: "https://aegis.khokhlovkirill.ru",
           ignoreFocusOut: true,
         });
         if (!entered) return;

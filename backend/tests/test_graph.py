@@ -103,3 +103,26 @@ def test_engine_knob_maps_to_dispatch_arg(engine: str | None, expected: bool | N
     from aegis.api.extension import _engine_to_pref
 
     assert _engine_to_pref(engine) is expected
+
+
+# ── Self-hosted GitLab base-URL resolution ─────────────────────────────────────
+def test_gitlab_base_url_default_and_selfhosted() -> None:
+    from aegis.providers.gitlab import GitLabProvider
+
+    p = GitLabProvider()
+    assert p.base_url == "https://gitlab.com/api/v4"
+
+    # Webhook from a self-hosted instance auto-targets that instance.
+    p.parse_event(
+        {"x-gitlab-event": "Merge Request Hook", "x-gitlab-event-uuid": "d"},
+        {
+            "project": {
+                "web_url": "https://git.khokhlovkirill.ru/grp/repo",
+                "path_with_namespace": "grp/repo",
+                "id": 7,
+            },
+            "object_attributes": {"action": "open", "iid": 3, "title": "t", "diff_refs": {}},
+            "user": {"username": "u"},
+        },
+    )
+    assert p.base_url == "https://git.khokhlovkirill.ru/api/v4"

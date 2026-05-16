@@ -56,6 +56,9 @@ ignore = ["S101", "S104"]
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S", "B"]
 "eval/*" = ["S"]
+# Bilingual (ru/en) localization strings — Cyrillic homoglyphs are intentional.
+"aegis/pipeline/simple_scan.py" = ["RUF001"]
+"aegis/pipeline/i18n.py" = ["RUF001"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -6,7 +6,7 @@ function cfg(): vscode.WorkspaceConfiguration {
 }
 
 export function getBackendUrl(): string {
-  return (cfg().get<string>("backendUrl") ?? "http://localhost:8080").replace(/\/$/, "");
+  return (cfg().get<string>("backendUrl") ?? "https://aegis.khokhlovkirill.ru").replace(/\/$/, "");
 }
 
 export function getSeverityGate(): SeverityLevel {

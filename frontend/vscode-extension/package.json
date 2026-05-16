@@ -166,7 +166,7 @@
       "properties": {
         "aegis.backendUrl": {
           "type": "string",
-          "default": "http://localhost:8080",
+          "default": "https://aegis.khokhlovkirill.ru",
           "description": "Aegis backend URL"
         },
         "aegis.autoScanOnBranchChange": {

@@ -22,7 +22,9 @@ async def llm_agent(state: ScanGraphState) -> dict[str, Any]:
     code_files = state.get("code_files") or []
     det_findings = state.get("det_findings") or []
 
-    findings, degraded_reasons = await _run_llm(slug, pr_number, code_files, det_findings)
+    findings, degraded_reasons = await _run_llm(
+        slug, pr_number, code_files, det_findings, lang=state.get("lang", "ru")
+    )
 
     # Free memory — unload LM Studio if swap mode is enabled. Mirrors
     # the behaviour of `run_simple_scan` so the graph path doesn't leak.

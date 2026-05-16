@@ -47,6 +47,9 @@ class Settings(BaseSettings):
 
     github_webhook_secret: str = Field("", alias="AEGIS_GITHUB_WEBHOOK_SECRET")
     gitlab_webhook_secret: str = Field("", alias="AEGIS_GITLAB_WEBHOOK_SECRET")
+    # Self-hosted GitLab base URL (e.g. https://git.khokhlovkirill.ru). Used
+    # as the default when a webhook payload doesn't carry the instance host.
+    gitlab_base_url: str = Field("https://gitlab.com", alias="GITLAB_BASE_URL")
     bitbucket_webhook_secret: str = Field("", alias="AEGIS_BITBUCKET_WEBHOOK_SECRET")
 
     openrouter_api_key: str = Field("", alias="OPENROUTER_API_KEY")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -28,7 +29,34 @@ _MR_UPDATED = {"update"}
 
 class GitLabProvider(HttpMixin):
     provider = Provider.GITLAB
-    base_url = "https://gitlab.com/api/v4"
+
+    _base_url_override: str | None = None
+
+    @property
+    def base_url(self) -> str:
+        """GitLab API v4 base for the configured instance.
+
+        Supports self-hosted GitLab (e.g. https://git.khokhlovkirill.ru) via
+        the `GITLAB_BASE_URL` setting; defaults to gitlab.com. A webhook can
+        set an explicit instance host (see `parse_event`) which takes
+        precedence over the global setting.
+        """
+        if self._base_url_override:
+            return self._base_url_override
+        from aegis.config import get_settings
+
+        root = (get_settings().gitlab_base_url or "https://gitlab.com").rstrip("/")
+        return f"{root}/api/v4"
+
+    @base_url.setter
+    def base_url(self, value: str) -> None:
+        self._base_url_override = value
+
+    @staticmethod
+    def _api_base_from_web_url(web_url: str) -> str | None:
+        """Derive `https://<host>/api/v4` from a project web URL in a payload."""
+        m = re.match(r"^(https?://[^/]+)", web_url or "")
+        return f"{m.group(1)}/api/v4" if m else None
 
     def _auth_headers(self, token: str) -> dict[str, str]:
         return {"PRIVATE-TOKEN": token}
@@ -39,6 +67,14 @@ class GitLabProvider(HttpMixin):
         project = payload.get("project", {})
         slug = project.get("path_with_namespace", "")
         repo_id = str(project.get("id", ""))
+
+        # Auto-target the GitLab instance that sent the webhook (handles
+        # self-hosted instances without per-deploy config). Falls back to the
+        # GITLAB_BASE_URL setting when the payload has no usable host.
+        web_url = project.get("web_url") or payload.get("repository", {}).get("homepage", "")
+        api_base = self._api_base_from_web_url(web_url)
+        if api_base:
+            self._base_url_override = api_base
 
         if kind_hdr == "Merge Request Hook":
             attrs = payload.get("object_attributes", {})

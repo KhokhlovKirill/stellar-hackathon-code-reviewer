@@ -21,6 +21,7 @@ from aegis.llm.prompt import judge_messages, review_messages
 from aegis.llm.router import LLMRouter
 from aegis.obs import get_logger
 from aegis.pipeline.deterministic.secrets import scan_secrets
+from aegis.pipeline.i18n import localize_findings_inplace
 from aegis.providers.diffparse import parse_unified_diff
 from aegis.schemas import FileChange, Finding, FindingSource, Severity
 
@@ -196,7 +197,11 @@ def _trim_files_to_budget(files: list[FileChange], char_budget: int) -> list[Fil
 
 
 async def _run_llm(
-    slug: str, pr_number: int, files: list[FileChange], det_findings: list[Finding]
+    slug: str,
+    pr_number: int,
+    files: list[FileChange],
+    det_findings: list[Finding],
+    lang: str = "ru",
 ) -> tuple[list[Finding], list[str]]:
     """Run cloud + mandatory Don detector, then judge.
 
@@ -230,6 +235,7 @@ async def _run_llm(
         files=trimmed_files,
         deterministic_findings=det_findings,
         context_map={},
+        lang=lang,
     )
     don_messages = [
         {
@@ -248,20 +254,30 @@ async def _run_llm(
     degraded_reasons: list[str] = []
 
     async def _run_cloud() -> LLMCompletion:
-        return await router.complete(
-            role="detector_a",
-            messages=messages,
-            schema=schema,
-            max_tokens=4096,
+        # Bounded so a slow/queued fallback to the local model can't make the
+        # whole scan hang — deterministic + Don findings still return.
+        return await asyncio.wait_for(
+            router.complete(
+                role="detector_a",
+                messages=messages,
+                schema=schema,
+                max_tokens=4096,
+            ),
+            timeout=_CLOUD_DETECTOR_BUDGET_SECONDS,
         )
 
     async def _run_don() -> LLMCompletion:
-        return await router.complete_on_tier(
-            tier="local-secure",
-            role="detector_b",
-            messages=don_messages,
-            schema=schema,
-            max_tokens=4096,
+        # Don runs on the Mac via the reverse tunnel; a saturated LM Studio
+        # queue must not stall the request indefinitely.
+        return await asyncio.wait_for(
+            router.complete_on_tier(
+                tier="local-secure",
+                role="detector_b",
+                messages=don_messages,
+                schema=schema,
+                max_tokens=4096,
+            ),
+            timeout=_DON_DETECTOR_BUDGET_SECONDS,
         )
 
     cloud_result, don_result = await asyncio.gather(
@@ -320,12 +336,16 @@ async def _run_llm(
                 files=trimmed_files,
                 candidates=all_candidates,
                 context_map={},
+                lang=lang,
             )
-            j_completion = await router.complete(
-                role="judge",
-                messages=j_messages,
-                schema=schema,
-                max_tokens=4096,
+            j_completion = await asyncio.wait_for(
+                router.complete(
+                    role="judge",
+                    messages=j_messages,
+                    schema=schema,
+                    max_tokens=4096,
+                ),
+                timeout=_JUDGE_BUDGET_SECONDS,
             )
             judged = parse_findings(j_completion.content, source=FindingSource.JUDGE)
             log.info("simple_scan.judge_ok", tier=j_completion.tier, count=len(judged))
@@ -427,7 +447,7 @@ def _fallback_summary(
             f"Подтверждённый результат: {ordered}.",
         ]
         if degraded_reasons:
-            lines.append(f"Модули с деградацией: {', '.join(degraded_reasons)}.")  # noqa: RUF001
+            lines.append(f"Модули с деградацией: {', '.join(degraded_reasons)}.")
         if top:
             lines.append("Самые приоритетные пункты:")
             lines.extend(
@@ -465,6 +485,22 @@ def _fallback_finding_labels(findings: list[Finding]) -> dict[str, str]:
     return labels
 
 
+# Time budgets: the pull-mode scan must return a result even when cloud judge
+# tiers are rate-limited and the request falls back to the local Don model
+# (which can take minutes for a large prompt). Without these the endpoint
+# appears to hang. On timeout the pipeline degrades gracefully.
+_CLOUD_DETECTOR_BUDGET_SECONDS = 90
+_DON_DETECTOR_BUDGET_SECONDS = 150
+_JUDGE_BUDGET_SECONDS = 90
+_REVIEW_BUDGET_SECONDS = 90
+
+# Deterministic finding localization lives in aegis.pipeline.i18n (shared
+# with the webhook render path). `_localize_findings_inplace` is the resilient
+# fallback so per-finding text is always in the configured language even if
+# the LLM review pass times out or skips a finding.
+_localize_findings_inplace = localize_findings_inplace
+
+
 async def _generate_scan_review(
     slug: str,
     pr_number: int,
@@ -495,22 +531,24 @@ async def _generate_scan_review(
             "source": f.source.value,
             "title": f.title,
             "rationale": f.rationale,
-            "fix": f.fix,
         }
-        for f in findings[:20]
+        for f in findings[:14]
     ]
     messages = [
         {
             "role": "system",
             "content": (
-                "You are Aegis coordinator. Write a clear production security review "
-                f"summary for the whole pull request in {language_name}. This must be readable "
-                "prose, not a checklist template and not a generic boilerplate. Mention "
-                "the concrete risk, affected files, priority, whether merge should wait, "
-                "and what should happen next. Also return a 1-5 word label for each "
-                "finding, in the same language, suitable for compact UI display. "
-                "Return JSON: {\"summary\":\"...\",\"finding_labels\":["
-                "{\"fingerprint\":\"...\",\"label\":\"...\"}]}."
+                "You are Aegis coordinator. Produce two deliverables, both "
+                f"written in {language_name}.\n"
+                "1) `summary` — clear production security review prose for the "
+                "whole pull request: concrete risk, affected files, priority, "
+                "whether merge should wait, what happens next. No checklist "
+                "templates, no boilerplate.\n"
+                "2) `finding_labels` — a 1-5 word UI label per finding (by "
+                "fingerprint).\n"
+                "Preserve every fingerprint exactly. Return only JSON:\n"
+                "{\"summary\":\"...\","
+                "\"finding_labels\":[{\"fingerprint\":\"...\",\"label\":\"...\"}]}."
             ),
         },
         {
@@ -534,17 +572,21 @@ async def _generate_scan_review(
         "required": ["summary"],
     }
     try:
-        completion = await LLMRouter().complete(
-            role="judge",
-            messages=messages,
-            schema=schema,
-            max_tokens=1200,
+        completion = await asyncio.wait_for(
+            LLMRouter().complete(
+                role="judge",
+                messages=messages,
+                schema=schema,
+                max_tokens=1500,
+            ),
+            timeout=_REVIEW_BUDGET_SECONDS,
         )
         text = completion.content.strip()
         start = text.find("{")
         end = text.rfind("}")
         data = json.loads(text[start:end + 1] if start >= 0 and end > start else text)
         summary = str(data.get("summary") or "").strip()
+
         labels: dict[str, str] = {}
         raw_labels = data.get("finding_labels") or []
         if isinstance(raw_labels, list):
@@ -555,9 +597,16 @@ async def _generate_scan_review(
                 label = str(item.get("label") or "").strip()
                 if fp and label:
                     labels[fp] = " ".join(label.split()[:5])
+
+        # LLM findings are already produced in the target language by the
+        # detector/judge prompts. Deterministic findings carry fixed English
+        # template text — translate those in place.
+        _localize_findings_inplace(findings, lang)
+
         return summary or fallback, labels or fallback_labels
     except Exception as exc:
         log.warning("simple_scan.summary_failed", error=str(exc))
+        _localize_findings_inplace(findings, lang)
         return fallback, fallback_labels
 
 
@@ -639,7 +688,9 @@ async def run_simple_scan(
     det_findings = scan_secrets(code_files)
 
     # LLM scan (local models with sequential swap, or cloud fallback)
-    findings, degraded_reasons = await _run_llm(slug, pr_number, code_files, det_findings)
+    findings, degraded_reasons = await _run_llm(
+        slug, pr_number, code_files, det_findings, lang=lang
+    )
 
     # Free memory — unload LLM after scan completes
     try:

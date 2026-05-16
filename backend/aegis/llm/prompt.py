@@ -30,6 +30,25 @@ Return only JSON matching this exact shape:
 "exploit":"concrete exploit scenario or null","fix":"specific remediation or null"}]}."""
 
 
+def _lang_directive(lang: str) -> str:
+    """Instruct the model to write human-readable finding text in `lang`.
+
+    Only the prose fields are localized — machine fields (file, line, cwe,
+    severity, JSON keys) stay canonical so parsing/dedup is unaffected.
+    """
+    if lang == "ru":
+        return (
+            "\n\nWrite the `title`, `rationale`, `exploit` and `fix` field "
+            "values in Russian. Keep JSON keys, file paths, line numbers, CWE "
+            "ids and severity values exactly as specified (do not translate "
+            "those)."
+        )
+    return (
+        "\n\nWrite the `title`, `rationale`, `exploit` and `fix` field values "
+        "in English."
+    )
+
+
 def review_messages(
     *,
     repo: str,
@@ -37,6 +56,7 @@ def review_messages(
     files: list[FileChange],
     deterministic_findings: list[Finding],
     context_map: dict[str, str] | None = None,
+    lang: str = "en",
 ) -> list[dict[str, str]]:
     body = [
         f"Repository: {repo}",
@@ -54,7 +74,7 @@ def review_messages(
         "<<<END_CONTEXT>>>",
     ]
     return [
-        {"role": "system", "content": SYSTEM_REVIEW},
+        {"role": "system", "content": SYSTEM_REVIEW + _lang_directive(lang)},
         {"role": "user", "content": "\n".join(body)},
     ]
 
@@ -66,6 +86,7 @@ def judge_messages(
     files: list[FileChange],
     candidates: list[Finding],
     context_map: dict[str, str] | None = None,
+    lang: str = "en",
 ) -> list[dict[str, str]]:
     body = [
         f"Repository: {repo}",
@@ -83,7 +104,7 @@ def judge_messages(
         "<<<END_CONTEXT>>>",
     ]
     return [
-        {"role": "system", "content": SYSTEM_JUDGE},
+        {"role": "system", "content": SYSTEM_JUDGE + _lang_directive(lang)},
         {"role": "user", "content": "\n".join(body)},
     ]
 
